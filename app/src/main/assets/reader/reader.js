@@ -1,6 +1,6 @@
 /* All publication content has been sanitized before this shell can open it. */
 'use strict';
-let book, rendition, queue=Promise.resolve(), opening=true, currentPreferences;
+let book, rendition, queue=Promise.resolve(), opening=true, currentPreferences, pendingAnchor=null;
 const tell=(type,value)=>ReaderBridge.event(type,JSON.stringify(value||{}));
 function serial(action){queue=queue.then(action).catch(()=>tell('error',{message:'This section could not be displayed. Open Chapters to try another section.'}));return queue;}
 function applyPreferences(p){
@@ -15,13 +15,19 @@ function applyPreferences(p){
  'a':{'color':fg+' !important'},'pre':{'white-space':'pre-wrap !important'},'table':{'max-width':'100% !important'}
  });
  rendition.themes.fontSize(p.fontSize+'px');
+ // The vendored manager calculates both column width and page-turn delta from this gap.
+ const gap=p.spread && document.documentElement.clientWidth>=900 ? 40 : 0;
+ rendition.settings.gap=gap;
+ if(rendition.manager)rendition.manager.settings.gap=gap;
+ rendition.spread(p.spread?'auto':'none',900);
 }
 window.openBook=function(config){
  serial(async()=>{
+  pendingAnchor=null;
   book=ePub(config.url,{replacements:'none'});
   rendition=book.renderTo('pages',{width:'100%',height:'100%',flow:'paginated',spread:'none',gap:0,allowScriptedContent:false,allowPopups:false});
   applyPreferences(config.preferences);
-  rendition.on('relocated',location=>{if(location.start&&location.start.cfi){tell('location',{cfi:location.start.cfi,href:location.start.href,atStart:location.atStart,atEnd:location.atEnd});}});
+  rendition.on('relocated',location=>{if(location.start&&location.start.cfi){tell('location',{cfi:pendingAnchor?.cfi||location.start.cfi,href:pendingAnchor?.href||location.start.href,atStart:location.atStart,atEnd:location.atEnd});}});
   rendition.on('displayError',()=>tell('error',{message:'Unable to render this section. Try another chapter.'}));
   await book.ready;
   if(document.fonts)await document.fonts.load(config.preferences.fontSize+'px Literata');
@@ -35,6 +41,8 @@ window.openBook=function(config){
   opening=false;tell('ready');
  });
 };
-window.turn=function(forward){return serial(async()=>{if(opening)return;const loc=rendition.currentLocation();if((forward&&loc.atEnd)||(!forward&&loc.atStart)){tell('boundary',{end:forward});return;}await (forward?rendition.next():rendition.prev());});};
-window.preferences=function(p){return serial(async()=>{const anchor=rendition.currentLocation()?.start?.cfi;applyPreferences(p);if(anchor)await rendition.display(anchor);});};
-window.chapter=function(href){return serial(()=>rendition.display(href||undefined));};
+window.turn=function(forward){return serial(async()=>{if(opening)return;pendingAnchor=null;const loc=rendition.currentLocation();if((forward&&loc.atEnd)||(!forward&&loc.atStart)){tell('boundary',{end:forward});return;}await (forward?rendition.next():rendition.prev());});};
+window.preferences=function(p){return serial(async()=>{// Preserve the original passage across a series of reflows, including persisted relocations.
+ if(!pendingAnchor){const start=rendition.currentLocation()?.start;if(start?.cfi)pendingAnchor={cfi:start.cfi,href:start.href};}
+ applyPreferences(p);if(pendingAnchor)await rendition.display(pendingAnchor.cfi);});};
+window.chapter=function(href){return serial(()=>{pendingAnchor=null;return rendition.display(href||undefined);});};

@@ -38,3 +38,21 @@ The documents require a renderer spike on the actual TV before finalizing compat
 ## Fullscreen reading — 5 November 2026 (v0.2.1)
 
 At the user's request, the reading surfaces now occupy the entire display. EPUB uses a 100% width/height viewport with no column-width cap, body padding, or pagination gutter. PDF removes the native outer frame padding and scrollbar. PDF page aspect ratio and the document's own printed margins remain intact. This supersedes the earlier capped reading column/safe-margin choice for book rendering; native controls and overlays retain their existing layout.
+
+## Global settings — 6 November 2026 (v0.3.0)
+
+Settings is a native, opaque full-screen page above the existing reader, retaining its measured viewport and engine. Back returns directly to reading; library access works even with no books. Option rows own Left/Right/OK and save immediately. Preferences schema 2 defaults missing spread/sleep fields to Off/30 minutes, preserving size/theme, and writes with apply(). Theme remains a reader quick action.
+
+EPUB auto spread uses a 900 CSS-pixel threshold and a 40px pagination gap when wide; single-page remains fullscreen without a gutter. The first visible CFI is redisplayed after preferences change. PDF ignores EPUB size/spread.
+
+The inactivity handler releases KEEP_SCREEN_ON after 15/30/60 minutes since the last key, including while reader settings or controls are visible. Never has no timeout; Add book keeps its existing behavior. The timeout does not force power-off or alter the TV's system settings. Backgrounding cancels the handler and clears the flag.
+
+About computes catalog count and private book-file bytes off the main thread. Instrumented tests may be built with -PisolatedTestApp to use dev.couchreader.qa and keep real TV books/preferences separate.
+
+## Settings review fixes — 7 November 2026 (v0.3.1)
+
+EPUB preferences retain a pending `{cfi,href}` passage across consecutive reflows. Relocation events save that passage instead of successively earlier page starts. Explicit page turns and chapter navigation clear it. This supersedes saving the first visible CFI during preference-only reflows; normal navigation still saves the new first visible position.
+
+Text size and sleep options clamp at their endpoints. Both text-size controls show CSS px; spread help refers to wide screens. Missing package version names display Unknown. Back to the library restores focus to Settings. Reader errors during settings are deferred until returning to reading; boundary events cannot open overlays and ready events cannot steal settings focus.
+
+Settings tests use typed module-internal Activity members rather than private-name reflection, and wait on conditions/renderer queue completion. Persistence is verified by polling and parsing the on-disk preferences XML after apply(), not by treating Activity recreation as a process restart.

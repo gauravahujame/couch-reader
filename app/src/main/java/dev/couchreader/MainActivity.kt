@@ -35,9 +35,11 @@ class MainActivity : Activity() {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private lateinit var root: FrameLayout
-    private var screen = "library"
+    internal var screen = "library"
+        private set
     private var selectedBook: String? = null
-    private var engine: ReaderEngine? = null
+    internal var engine: ReaderEngine? = null
+        private set
     private var currentBook: Book? = null
     private var chapters = listOf<Pair<String, String>>()
     private var overlay: View? = null
@@ -45,7 +47,20 @@ class MainActivity : Activity() {
     private var pairingGeneration = 0
     private var readerGeneration = 0
     private var onPairingTick: ((Boolean) -> Unit)? = null
-    private var ready = false
+    internal var ready = false
+        private set
+    private var settingsView: View? = null
+    private var settingsFromReader = false
+    private var pendingReaderError: String? = null
+    private var restoreSettingsFocus = false
+    internal val sleepTimer = Runnable { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    private fun resetSleepTimer() {
+        main.removeCallbacks(sleepTimer)
+        if (screen != "reader" && !(screen == "settings" && settingsFromReader)) return
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val minutes = preferences.get().sleepMinutes
+        if (minutes > 0) main.postDelayed(sleepTimer, minutes * 60_000L)
+    }
     private var activeDialog: AlertDialog? = null
     private val timer = object : Runnable {
         override fun run() {
@@ -94,7 +109,11 @@ class MainActivity : Activity() {
         val content = page()
         val catalog = books.books()
         val add = action("＋  Add book", primary = true) { showImport() }
-        masthead(content, if (catalog.isEmpty()) null else add)
+        val headerActions = row()
+        val settingsButton = action("Settings") { settings() }
+        headerActions.addView(settingsButton)
+        if (catalog.isNotEmpty()) { headerActions.space(10); headerActions.addView(add) }
+        masthead(content, headerActions)
         if (catalog.isEmpty()) {
             val center = row().apply { gravity = Gravity.CENTER }
             val illustration = column().apply {
@@ -116,7 +135,7 @@ class MainActivity : Activity() {
             center.addView(intro, LinearLayout.LayoutParams(0, -2, 1f))
             content.addView(center, LinearLayout.LayoutParams(-1, 0, 1f))
             content.addView(label("01   ADD A BOOK     /     02   SETTLE IN     /     03   READ AT YOUR OWN PACE", 12f, Palette.muted).apply { letterSpacing = .1f; gravity = Gravity.CENTER })
-            add.requestFocus()
+            (if (restoreSettingsFocus) settingsButton else add).requestFocus(); restoreSettingsFocus = false
             return
         }
         val heading = row()
@@ -172,7 +191,7 @@ class MainActivity : Activity() {
         scroll.addView(grid); content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         content.space(8)
         content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open", 11f, Palette.muted).apply { letterSpacing = .08f })
-        (restore ?: add).requestFocus()
+        (if (restoreSettingsFocus) settingsButton else restore ?: add).requestFocus(); restoreSettingsFocus = false
     }
     private fun bookActions(book: Book) {
         activeDialog = AlertDialog.Builder(this).setTitle(book.title).setItems(arrayOf("Read", "Remove from device")) { _, which ->
@@ -262,7 +281,7 @@ class MainActivity : Activity() {
         }
     }
     private fun stopPairing() { main.removeCallbacks(timer); onPairingTick = null; server?.stop(); server = null; pairingGeneration++ }
-    private fun open(book: Book) {
+    internal fun open(book: Book) {
         stopPairing(); closeReader(); screen = "reader"; currentBook = book; selectedBook = book.id
         val generation = readerGeneration
         ready = false; chapters = emptyList()
@@ -274,9 +293,9 @@ class MainActivity : Activity() {
             main.post {
                 if (screen != "reader" || currentBook?.id != book.id || generation != readerGeneration || isDestroyed) return@post
                 val eventHandler: (String, String) -> Unit = event@ { type, payload ->
-                    if (screen != "reader" || currentBook?.id != book.id || generation != readerGeneration) return@event
+                    if ((screen != "reader" && !(screen == "settings" && settingsFromReader)) || currentBook?.id != book.id || generation != readerGeneration) return@event
                     when (type) {
-                        "ready" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
+                        "ready" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
                         "chapters" -> { val list = JSONArray(payload); chapters = (0 until list.length()).map { list.getJSONObject(it).let { item -> item.getString("title") to item.getString("href") } } }
                         "location" -> {
                             val data = JSONObject(payload)
@@ -284,9 +303,11 @@ class MainActivity : Activity() {
                                 else Locator(data.getString("cfi"), data.getString("href"))
                             io.execute { positions.save(book.id, locator) }
                         }
-                        "boundary" -> if (JSONObject(payload).optBoolean("end")) finishedBook() else notice("You’re at the beginning of this book.")
+                        "boundary" -> if (screen == "reader") { if (JSONObject(payload).optBoolean("end")) finishedBook() else notice("You’re at the beginning of this book.") }
                         "notice" -> notice(JSONObject(payload).getString("message"))
-                        "error" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; notice(JSONObject(payload).getString("message")); controls() }
+                        "error" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; val message = JSONObject(payload).getString("message")
+                            if (screen == "settings") pendingReaderError = message
+                            else { notice(message); controls() } }
                     }
                 }
                 val renderer: ReaderEngine = if (book.format == "pdf")
@@ -296,11 +317,13 @@ class MainActivity : Activity() {
                 root.removeAllViews(); root.addView(renderer.view, FrameLayout.LayoutParams(-1, -1))
                 root.addView(label("Opening book…", 22f).apply { tag = "loading"; setBackgroundColor(Palette.paper); setPadding(dp(20), dp(20), dp(20), dp(20)) }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
                 root.isFocusableInTouchMode = true; root.requestFocus()
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                resetSleepTimer()
             }
         }
     }
     private fun closeReader() {
+        main.removeCallbacks(sleepTimer)
+        pendingReaderError = null
         readerGeneration++
         overlay = null; currentBook = null
         engine?.let { root.removeView(it.view); it.close() }; engine = null
@@ -325,11 +348,11 @@ class MainActivity : Activity() {
         panel.addView(label(currentBook?.title.orEmpty(), 16f, Palette.muted)); panel.space(12)
         var pref = preferences.get()
         val isPdf = currentBook?.format == "pdf"
-        val sizeLabel = label("Text size  ·  ${pref.size + 1} of 6", 17f)
+        val sizeLabel = label("Text size  ·  ${ReadingPreferences.sizes[pref.size]} px", 17f)
         if (!isPdf) panel.addView(sizeLabel)
         else panel.addView(label("PDF · fixed page layout. Use ↑ / ↓ to scroll, ← / → for pages.", 17f, Palette.muted))
         val sizes = row()
-        fun update(value: ReadingPreferences) { pref = value; preferences.save(pref); engine?.preferences(pref); sizeLabel.text = "Text size  ·  ${pref.size + 1} of 6" }
+        fun update(value: ReadingPreferences) { pref = value; preferences.save(pref); engine?.preferences(pref); sizeLabel.text = "Text size  ·  ${ReadingPreferences.sizes[pref.size]} px" }
         sizes.addView(action("A−  Smaller") { update(pref.copy(size = (pref.size - 1).coerceAtLeast(0))) })
         sizes.space(10); sizes.addView(action("A＋  Larger") { update(pref.copy(size = (pref.size + 1).coerceAtMost(5))) })
         if (!isPdf) panel.addView(sizes)
@@ -338,9 +361,88 @@ class MainActivity : Activity() {
         themes.addView(action("Warm light") { update(pref.copy(dark = false)) }); themes.space(10)
         themes.addView(action("Dark") { update(pref.copy(dark = true)) }); panel.addView(themes); panel.space(10)
         if (!isPdf) panel.addView(action("Chapters   →") { chapterList() }, LinearLayout.LayoutParams(-1, -2))
+        panel.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(-1, -2))
         panel.space(10)
         val resume = action("Back to reading", true) { hideOverlay() }
         panel.addView(resume, LinearLayout.LayoutParams(-1, -2)); resume.requestFocus()
+    }
+    private fun leaveSettings() {
+        settingsView?.let { root.removeView(it) }; settingsView = null
+        if (settingsFromReader) {
+            screen = "reader"; root.requestFocus()
+            pendingReaderError?.let { pendingReaderError = null; notice(it); controls() }
+        } else { restoreSettingsFocus = true; library() }
+    }
+    internal fun settings() {
+        settingsFromReader = screen == "reader"
+        hideOverlay(); screen = "settings"
+        if (!settingsFromReader) root.removeAllViews()
+        // Keep the renderer measured and alive underneath the opaque settings page.
+        val content = column().apply {
+            setBackgroundColor(Palette.paper)
+            val x = (resources.displayMetrics.widthPixels * .05).toInt()
+            val y = (resources.displayMetrics.heightPixels * .05).toInt()
+            setPadding(x, y, x, y)
+            isFocusableInTouchMode = false
+        }
+        settingsView = content; root.addView(content, FrameLayout.LayoutParams(-1, -1))
+        masthead(content, action("Back") { leaveSettings() })
+        content.addView(label("Settings", 32f, serif = true)); content.space(10)
+        val description = label("", 15f, Palette.muted).apply { minHeight = dp(42) }
+        val rows = column()
+        val scroll = ScrollView(this).apply { addView(rows) }
+        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        content.space(8); content.addView(description)
+        var pref = preferences.get()
+        fun save(value: ReadingPreferences) {
+            val renderChanged = value.size != pref.size || value.spread != pref.spread || value.dark != pref.dark
+            pref = value; preferences.save(value)
+            if (renderChanged) engine?.preferences(value)
+            resetSleepTimer()
+        }
+        fun heading(text: String) { rows.addView(label(text, 19f, serif = true)); rows.space(5) }
+        fun option(title: String, explanation: String, value: () -> String, change: (Int) -> Unit): OptionRow {
+            val row = OptionRow(this, title, value, change) { description.text = explanation }
+            rows.addView(row, LinearLayout.LayoutParams(-1, -2)); rows.space(8)
+            return row
+        }
+        heading("Text")
+        val first = option("Text size · Applies to EPUB", "Changes EPUB text across all books. PDF pages keep their printed layout.",
+            { "${ReadingPreferences.sizes[pref.size]} px" }) { save(pref.copy(size = (pref.size + it).coerceIn(0, 5))) }
+        heading("Page")
+        option("Two-page spread · Applies to EPUB", "Shows two pages on wide screens, with space between them.",
+            { if (pref.spread) "On" else "Off" }) { save(pref.copy(spread = !pref.spread)) }
+        heading("Screen")
+        option("Let the TV sleep after no key press", "Releases the screen after this idle time. Your TV controls when its screensaver or sleep starts.",
+            { if (pref.sleepMinutes == 0) "Never" else "${pref.sleepMinutes} min" }) {
+            val options = ReadingPreferences.sleepOptions
+            save(pref.copy(sleepMinutes = options[(options.indexOf(pref.sleepMinutes) + it).coerceIn(0, options.lastIndex)]))
+        }
+        heading("About")
+        @Suppress("DEPRECATION")
+        val version = packageManager.getPackageInfo(packageName, 0).versionName?.takeIf { it.isNotBlank() } ?: "Unknown"
+        val about = column().apply {
+            isFocusable = true
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = shape(Palette.white)
+            setOnFocusChangeListener { _, focused ->
+                background = shape(Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
+                if (focused) description.text = "App version and books stored on this TV. Storage includes all private book files."
+            }
+        }
+        rows.addView(about, LinearLayout.LayoutParams(-1, -2))
+        about.addView(label("Version  $version", 16f)); about.space(6)
+        val totals = label("Calculating…", 16f, Palette.muted)
+        about.addView(totals); rows.space(10)
+        io.execute {
+            val result = runCatching {
+                val count = books.books().size
+                val bytes = books.root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                "$count ${if (count == 1) "book" else "books"} stored · ${android.text.format.Formatter.formatFileSize(this, bytes)} used"
+            }.getOrDefault("Storage information unavailable")
+            main.post { if (settingsView === content) totals.text = result }
+        }
+        first.requestFocus()
     }
     private fun chapterList() {
         val panel = overlayPanel("Chapters")
@@ -358,6 +460,7 @@ class MainActivity : Activity() {
     }
     private fun notice(message: String) { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) resetSleepTimer()
         if (screen == "reader" && activeDialog?.isShowing != true && overlay == null) {
             if (event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER)) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && ready) when (event.keyCode) {
@@ -374,15 +477,18 @@ class MainActivity : Activity() {
     }
     @Deprecated("TV back navigation")
     override fun onBackPressed() {
+        if (screen == "settings") { leaveSettings(); return }
         if (overlay != null) { hideOverlay(); return }
         if (screen == "reader" || screen == "import") { library(); return }
         super.onBackPressed()
     }
     override fun onStop() {
         super.onStop()
+        main.removeCallbacks(sleepTimer)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (screen == "import") { stopPairing(); screen = "import-paused" }
     }
-    override fun onStart() { super.onStart(); if (::root.isInitialized && screen == "import-paused") showImport() }
+    override fun onStart() { super.onStart(); if (::preferences.isInitialized) resetSleepTimer(); if (::root.isInitialized && screen == "import-paused") showImport() }
     override fun onDestroy() {
         stopPairing(); closeReader(); io.shutdown()
         super.onDestroy()

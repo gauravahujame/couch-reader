@@ -236,3 +236,7 @@ Use automated checks for importer validation, deduplication, repository persiste
 ## 10. Information needed before coding
 
 Confirm the TV model/Android version and whether the user's actual books are available as reflowable DRM-free EPUBs. The specification proceeds with EPUB as the default; if the collection is mainly PDF or locked to a reading service, revisit format and import scope before implementation.
+
+## Settings amendment — 6 November 2026
+
+Library masthead and reader controls expose global Settings. Native option rows support Up/Down navigation, Left/Right and OK changes, immediate persistence, focused descriptions, and 5% safe margins. Text size is 24/28/32/36/42/48px (32 default); two-page EPUB spread defaults Off and activates only on wide viewports. Both show Applies to EPUB; theme remains in quick reader controls. Screen inactivity choices are 15/30/60 minutes/Never, default 30. Expiry releases the screen to TV system behavior; any key resets it. Add book stays awake. About shows package version, book count, and private book storage asynchronously. Returning from settings retains the book engine and passage.

@@ -34,8 +34,9 @@ data class Locator(val cfi: String = "", val href: String = "", val version: Int
         }.getOrNull()
     }
 }
-data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false) {
-    companion object { val sizes = listOf(24, 28, 32, 36, 42, 48) }
+data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false,
+                              val spread: Boolean = false, val sleepMinutes: Int = 30) {
+    companion object { val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0) }
 }
 class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 2) {
     override fun onCreate(db: SQLiteDatabase) {
@@ -104,6 +105,8 @@ class PositionRepository(private val db: LibraryDatabase) {
 }
 class PreferencesRepository(context: Context) {
     private val storage = context.getSharedPreferences("reading", Context.MODE_PRIVATE)
-    fun get() = ReadingPreferences(storage.getInt("size", 2).coerceIn(0, 5), storage.getBoolean("dark", false))
-    fun save(value: ReadingPreferences) { storage.edit().putInt("version", 1).putInt("size", value.size).putBoolean("dark", value.dark).commit() }
+    fun get() = ReadingPreferences(storage.getInt("size", 2).coerceIn(0, 5), storage.getBoolean("dark", false),
+        storage.getBoolean("spread", false), storage.getInt("sleepMinutes", 30).takeIf { it in ReadingPreferences.sleepOptions } ?: 30)
+    fun save(value: ReadingPreferences) { storage.edit().putInt("version", 2).putInt("size", value.size).putBoolean("dark", value.dark)
+        .putBoolean("spread", value.spread).putInt("sleepMinutes", value.sleepMinutes).apply() }
 }

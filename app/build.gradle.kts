@@ -6,11 +6,11 @@ android {
     namespace = "dev.couchreader"
     compileSdk = 35
     defaultConfig {
-        applicationId = "dev.couchreader"
+        applicationId = if (providers.gradleProperty("isolatedTestApp").isPresent) "dev.couchreader.qa" else "dev.couchreader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.2.1"
+        versionCode = 5
+        versionName = "0.3.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
