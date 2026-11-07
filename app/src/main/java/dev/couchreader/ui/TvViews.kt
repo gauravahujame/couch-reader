@@ -43,6 +43,10 @@ fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit)
     background = shape(if (primary) Palette.green else Palette.white)
     setTextColor(if (primary) Color.WHITE else Palette.ink)
     isFocusable = true
+    // The platform Button's default StateListAnimator adds a 2dp resting elevation whose shadow
+    // is clipped by tight parents. Elevation is owned by the focus listener below instead.
+    stateListAnimator = null
+    elevation = 0f
     setOnFocusChangeListener { _, focused ->
         background = shape(if (focused || primary) Palette.green else Palette.white,
             border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
@@ -52,8 +56,9 @@ fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit)
     setOnClickListener { onClick() }
 }
 fun LinearLayout.space(size: Int) { addView(View(context), LinearLayout.LayoutParams(context.dp(size), context.dp(size))) }
-fun Context.column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-fun Context.row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+// clipChildren = false lets a focused button's elevation shadow draw past the container's edges.
+fun Context.column() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+fun Context.row() = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
 
 /** A drawn mark stays centered independently of font glyph metrics. */
 class BookUnderline(context: Context) : View(context) {

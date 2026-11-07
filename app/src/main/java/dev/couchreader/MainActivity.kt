@@ -147,7 +147,11 @@ class MainActivity : Activity() {
             val continueButton = action("Continue reading   ·   ${book.title}   →") { open(book) }
             content.addView(continueButton, LinearLayout.LayoutParams(-1, -2)); content.space(12)
         }
-        val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
+        // The parent column draws children unclipped (for focus shadows), so the scroller clips itself.
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true; clipToPadding = false
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
+        }
         val grid = column()
         val cardWidth = ((resources.displayMetrics.widthPixels * .88 - dp(36)) / 3).toInt()
         var restore: View? = null
