@@ -105,6 +105,35 @@ class LibraryIntegrationTest {
         assertEquals("epub", books.books().single().format)
         assertEquals(locator, PositionRepository(db).get("existing"))
     }
+    @Test fun refreshesTitlesAndAuthorsImportedByOlderReleasesOnce() {
+        db.close()
+        val context = RuntimeEnvironment.getApplication()
+        context.deleteDatabase("library.db")
+        val old = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath("library.db"), null)
+        old.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, title TEXT NOT NULL, author TEXT NOT NULL, opf TEXT NOT NULL, imported INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT 'epub')")
+        old.execSQL("CREATE TABLE positions(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, locator TEXT NOT NULL, updated INTEGER NOT NULL)")
+        old.execSQL("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, fraction REAL, chapter TEXT NOT NULL)")
+        old.execSQL("INSERT INTO books VALUES('plain','h1','Understanding_Harness_Engineering','Unknown author','book.pdf',1,0,'pdf')")
+        old.execSQL("INSERT INTO books VALUES('tagged','h2','scan_0001','Unknown author','book.pdf',1,0,'pdf')")
+        old.execSQL("INSERT INTO books VALUES('epub','h3','A Quiet Book','Unknown author','package.opf',1,0,'epub')")
+        old.version = 3; old.close()
+        db = LibraryDatabase(context); books = BookRepository(context, db)
+        File(books.root, "plain").apply { mkdirs() }.resolve("book.pdf").writeText("%PDF-1.4\ntrailer << >>\n%%EOF")
+        File(books.root, "tagged").apply { mkdirs() }.resolve("book.pdf")
+            .writeText("%PDF-1.4\n3 0 obj\n<< /Title (Field Notes) /Author (Jane Doe) >>\nendobj\ntrailer << /Info 3 0 R >>\n%%EOF")
+        books.refreshMetadata()
+        val byId = books.books().associateBy { it.id }
+        assertEquals("Understanding Harness Engineering", byId.getValue("plain").title)
+        assertEquals("", byId.getValue("plain").author)
+        assertEquals("Field Notes", byId.getValue("tagged").title)
+        assertEquals("Jane Doe", byId.getValue("tagged").author)
+        assertEquals("A Quiet Book", byId.getValue("epub").title)
+        assertEquals("", byId.getValue("epub").author)
+        // A second start does not re-read files: changes made afterwards are kept.
+        db.writableDatabase.execSQL("UPDATE books SET title='Kept' WHERE id='plain'")
+        books.refreshMetadata()
+        assertEquals("Kept", books.books().first { it.id == "plain" }.title)
+    }
     @Test fun pdfLocatorsRoundTripAndRejectInvalidOffsets() {
         val locator = Locator.pdf(8, .375f)
         assertEquals(locator, Locator.decode(locator.encode()))

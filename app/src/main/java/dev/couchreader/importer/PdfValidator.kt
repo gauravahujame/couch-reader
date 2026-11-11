@@ -26,13 +26,21 @@ class PdfValidator {
             source.inputStream().use { input -> val buffer = ByteArray(8192)
                 while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
             }
-            return ValidatedBook(filename.substringBeforeLast('.').take(300).ifBlank { "Untitled PDF" },
-                "Unknown author", "book.pdf", digest.digest().joinToString("") { "%02x".format(it) })
+            val metadata = describe(source, filename)
+            return ValidatedBook(metadata.title, metadata.author, "book.pdf", digest.digest().joinToString("") { "%02x".format(it) })
         } catch (failure: Exception) {
             destination.deleteRecursively()
             if (failure is ImportFailure) throw failure
             if (failure is SecurityException) throw ImportFailure("Password-protected PDFs are not supported. Choose an unlocked copy.")
             throw ImportFailure("This PDF could not be opened. Choose a valid, unlocked PDF and try again.")
+        }
+    }
+    companion object {
+        const val UNTITLED = "Untitled PDF"
+        /** Embedded title and author when they are meaningful, else a title tidied from [filename] and no author. */
+        fun describe(pdf: File, filename: String): DisplayMetadata {
+            val (title, author) = PdfMetadataReader().read(pdf).display()
+            return DisplayMetadata(title ?: BookMetadata.titleFromFilename(filename, UNTITLED), author.orEmpty())
         }
     }
 }

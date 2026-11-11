@@ -4,8 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import dev.couchreader.importer.BookMetadata
+import dev.couchreader.importer.DisplayMetadata
 import org.json.JSONObject
 import java.io.File
+
+/** Bump when title/author derivation changes so existing books are re-derived once at startup. */
+const val METADATA_VERSION = 1
 
 /** Content files are finalized before the catalog transaction. Startup removes orphan directories. */
 data class Book(val id: String, val hash: String, val title: String, val author: String,
@@ -38,9 +43,9 @@ data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false,
                               val spread: Boolean = false, val sleepMinutes: Int = 30) {
     companion object { val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0) }
 }
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 3) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, title TEXT NOT NULL, author TEXT NOT NULL, opf TEXT NOT NULL, imported INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT 'epub')")
+        db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, title TEXT NOT NULL, author TEXT NOT NULL, opf TEXT NOT NULL, imported INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT 'epub', metadata INTEGER NOT NULL DEFAULT 0)")
         createProgress(db)
         db.execSQL("CREATE TABLE positions(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, locator TEXT NOT NULL, updated INTEGER NOT NULL)")
     }
@@ -48,10 +53,17 @@ class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db"
         db.execSQL("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, fraction REAL, chapter TEXT NOT NULL)")
     }
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
+    private fun hasColumn(db: SQLiteDatabase, table: String, column: String): Boolean =
+        db.rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            val name = cursor.getColumnIndexOrThrow("name")
+            generateSequence { if (cursor.moveToNext()) cursor.getString(name) else null }.any { it == column }
+        }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) db.execSQL("ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'epub'")
         if (oldVersion < 3) createProgress(db)
-        check(newVersion <= 3) { "A migration is required before changing the database version" }
+        // Which metadata rules produced a row's title and author; BookRepository.refreshMetadata() upgrades older rows.
+        if (oldVersion < 4 && !hasColumn(db, "books", "metadata")) db.execSQL("ALTER TABLE books ADD COLUMN metadata INTEGER NOT NULL DEFAULT 0")
+        check(newVersion <= 4) { "A migration is required before changing the database version" }
     }
 }
 class BookRepository(context: Context, private val db: LibraryDatabase) {
@@ -75,6 +87,7 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
             sql.insertOrThrow("books", null, ContentValues().apply {
                 put("id", book.id); put("hash", book.hash); put("title", book.title); put("format", book.format)
                 put("author", book.author); put("opf", book.contentPath); put("imported", book.imported); put("opened", book.opened)
+                put("metadata", METADATA_VERSION)
             })
             sql.setTransactionSuccessful()
         } catch (failure: Exception) {
@@ -103,6 +116,32 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
         db.writableDatabase.delete("books", "id=?", arrayOf(book.id))
         directory(book).deleteRecursively()
         android.util.AtomicFile(locationCache(book)).delete()
+    }
+    /**
+     * Re-derives title and author for books imported under older rules: PDFs stored their filename and
+     * "Unknown author". Runs once per book; a book that cannot be read keeps its current text.
+     */
+    @Synchronized fun refreshMetadata() {
+        val stale = db.readableDatabase.rawQuery("SELECT id FROM books WHERE metadata < ?", arrayOf(METADATA_VERSION.toString()))
+            .use { cursor -> buildSet { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        if (stale.isEmpty()) return
+        books().filter { it.id in stale }.forEach { book ->
+            val updated = runCatching {
+                if (book.format == "pdf") {
+                    // The stored title is the upload filename without ".pdf"; restore the extension so only it is stripped.
+                    dev.couchreader.importer.PdfValidator.describe(File(directory(book), book.contentPath), "${book.title}.pdf")
+                } else {
+                    val filenameLike = !book.title.contains(' ') && book.title.contains('_')
+                    DisplayMetadata(
+                        if (filenameLike) BookMetadata.titleFromFilename(book.title, book.title) else BookMetadata.cleanTitle(book.title) ?: book.title,
+                        BookMetadata.cleanAuthor(book.author).orEmpty())
+                }
+            }.getOrNull()
+            db.writableDatabase.update("books", ContentValues().apply {
+                if (updated != null) { put("title", updated.title); put("author", updated.author) }
+                put("metadata", METADATA_VERSION)
+            }, "id=?", arrayOf(book.id))
+        }
     }
     @Synchronized fun reconcile() {
         staging.listFiles()?.forEach { it.deleteRecursively() }

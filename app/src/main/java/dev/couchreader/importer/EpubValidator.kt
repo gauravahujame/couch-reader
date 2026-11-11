@@ -109,8 +109,9 @@ class EpubValidator {
             source.inputStream().use { input -> val buffer = ByteArray(8192)
                 while (true) { val n = input.read(buffer); if (n < 0) break; digest.update(buffer, 0, n) }
             }
-            return ValidatedBook(metadata("title").ifBlank { filename.substringBeforeLast('.').take(300).ifBlank { "Untitled book" } },
-                metadata("creator").ifBlank { "Unknown author" }, opfPath,
+            val creators = opf.getElementsByTagNameNS("*", "creator").let { nodes -> (0 until nodes.length).map { nodes.item(it).textContent } }
+            return ValidatedBook(BookMetadata.cleanTitle(metadata("title")) ?: BookMetadata.titleFromFilename(filename, "Untitled book"),
+                BookMetadata.cleanAuthor(creators.joinToString("; ")).orEmpty(), opfPath,
                 digest.digest().joinToString("") { "%02x".format(it) })
         } catch (e: Exception) {
             destination.deleteRecursively()

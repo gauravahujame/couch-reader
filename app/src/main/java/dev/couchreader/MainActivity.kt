@@ -89,6 +89,7 @@ class MainActivity : Activity() {
         loading("Couch Reader", "Preparing your library")
         io.execute {
             books.reconcile()
+            books.refreshMetadata()
             main.post { if (!isDestroyed) library() }
         }
     }
@@ -210,7 +211,7 @@ class MainActivity : Activity() {
                 val buttons = row()
                 val read = action(if (book.opened > 0) "Continue" else "Start reading") { open(book) }.apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    contentDescription = "Read ${book.title} by ${book.author}"
+                    contentDescription = if (book.author.isBlank()) "Read ${book.title}" else "Read ${book.title} by ${book.author}"
                     setOnFocusChangeListener { _, focused ->
                         if (focused) selectedBook = book.id
                         background = shape(if (focused) Palette.green else Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
@@ -326,7 +327,10 @@ class MainActivity : Activity() {
     private fun bookActions(book: Book) {
         overlayReturnFocus = currentFocus
         val panel = overlayPanel(book.title)
-        panel.addView(label(book.author, 17f, Palette.muted)); panel.space(16)
+        if (book.author.isNotBlank()) {
+            panel.addView(label(book.author, 17f, Palette.muted).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+            panel.space(16)
+        } else panel.space(4)
         val read = action(if (book.opened > 0) "Continue reading" else "Start reading", true) { open(book) }
         panel.addView(read, LinearLayout.LayoutParams(-1, -2)); panel.space(8)
         panel.addView(action("Remove from device") { confirmRemove(book) }, LinearLayout.LayoutParams(-1, -2)); panel.space(8)
@@ -335,7 +339,7 @@ class MainActivity : Activity() {
     }
     private fun confirmRemove(book: Book) {
         val panel = overlayPanel("Remove from device?")
-        panel.addView(label("${book.title} and its saved reading position will be removed. You can import the book again later.", 18f, Palette.muted)); panel.space(16)
+        panel.addView(label("“${BookMetadata.ellipsize(book.title, 90)}” and its saved reading position will be removed. You can import the book again later.", 18f, Palette.muted)); panel.space(16)
         val buttons = row()
         val keep = action("Keep book", true) { hideOverlay() }
         buttons.addView(keep); buttons.space(10)
@@ -431,7 +435,7 @@ class MainActivity : Activity() {
         val returning = book.opened > 0
         val opening = loading(if (returning) "Welcome back" else "Now opening", book.title,
             hero = FrameLayout(this).apply { clipChildren = false; addView(cover, FrameLayout.LayoutParams(dp(150), dp(214))) },
-            detail = "by ${book.author}")
+            detail = book.author.takeIf { it.isNotBlank() }?.let { "by $it" })
         val live = liveProgress[book.id]
         io.execute {
             val position = positions.get(book.id)
@@ -491,7 +495,9 @@ class MainActivity : Activity() {
     private fun overlayPanel(title: String): LinearLayout {
         overlay?.let { root.removeView(it) }
         val scrim = FrameLayout(this).apply { setBackgroundColor(0xb3202822.toInt()); isFocusable = false }
-        val panel = column().apply { setPadding(dp(30), dp(22), dp(30), dp(22)); background = shape(Palette.paper, dp(18).toFloat()); addView(label(title, 29f, serif = true)); space(14) }
+        // Book titles can run to 300 characters; three lines keep the actions in view.
+        val heading = label(title, 29f, serif = true).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }
+        val panel = column().apply { setPadding(dp(30), dp(22), dp(30), dp(22)); background = shape(Palette.paper, dp(18).toFloat()); addView(heading); space(14) }
         val scroll = ScrollView(this).apply { isFillViewport = false; addView(panel) }
         val margin = (resources.displayMetrics.heightPixels * .07).toInt()
         scrim.addView(scroll, FrameLayout.LayoutParams(dp(560).coerceAtMost((resources.displayMetrics.widthPixels * .86).toInt()), -2, Gravity.CENTER).apply { topMargin = margin; bottomMargin = margin })

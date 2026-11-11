@@ -75,9 +75,10 @@ class BookCover(context: Context, title: String, author: String, format: String,
         space((10 * scale).toInt())
         addView(this.title)
         space((10 * scale).toInt())
-        addView(context.label(author, 12f * scale, 0xfff1e9d8.toInt()).apply {
+        // No author is known for many PDFs; the title stays centered without an empty line under it.
+        if (author.isNotBlank()) addView(context.label(author, 12f * scale, 0xfff1e9d8.toInt()).apply {
             gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
         })
-        contentDescription = "$title by $author"
+        contentDescription = if (author.isBlank()) title else "$title by $author"
     }
 }
