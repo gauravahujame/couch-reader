@@ -565,7 +565,12 @@ class MainActivity : Activity() {
         content.addView(label("Settings", 32f, serif = true)); content.space(10)
         val description = label("", 15f, Palette.muted).apply { minHeight = dp(42) }
         val rows = column()
-        val scroll = ScrollView(this).apply { addView(rows) }
+        // The parent column draws children unclipped (for focus shadows), so the scroller clips itself;
+        // otherwise scrolled rows paint over the title above and the description below.
+        val scroll = ScrollView(this).apply {
+            addView(rows)
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
+        }
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         content.space(8); content.addView(description)
         var pref = preferences.get()
