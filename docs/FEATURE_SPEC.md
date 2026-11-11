@@ -240,3 +240,9 @@ Confirm the TV model/Android version and whether the user's actual books are ava
 ## Settings amendment — 6 November 2026
 
 Library masthead and reader controls expose global Settings. Native option rows support Up/Down navigation, Left/Right and OK changes, immediate persistence, focused descriptions, and 5% safe margins. Text size is 24/28/32/36/42/48px (32 default); two-page EPUB spread defaults Off and activates only on wide viewports. Both show Applies to EPUB; theme remains in quick reader controls. Screen inactivity choices are 15/30/60 minutes/Never, default 30. Expiry releases the screen to TV system behavior; any key resets it. Add book stays awake. About shows package version, book count, and private book storage asynchronously. Returning from settings retains the book engine and passage.
+
+## Chapter and reading progress — 7 November 2026
+
+Reader controls show the current EPUB chapter and percentage through the book. Before its text-location index is ready, show Calculating progress; a failed index must not prevent reading. Library cards show a non-focusable progress bar and percentage, with unopened books at zero. PDF controls show the fixed page position and corresponding progress.
+
+EPUB progress derives from generated character-based CFI locations, independent of viewport, font size or spread. Generate asynchronously on a separate book instance after the reader is ready, outside the page-command queue, and reuse the versioned, content-hash-bound private cache on later opens. Keep EPUB resume positions as CFIs; never persist reflowed page numbers. Derived percentage/chapter display data is separate from resume positions. Removing a book removes its cache and derived display data.

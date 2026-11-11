@@ -48,6 +48,22 @@ class LibraryIntegrationTest {
         assertEquals("two.xhtml", PositionRepository(db).get(second.id)!!.href)
         assertEquals(ReadingPreferences(4, true), PreferencesRepository(context).get())
     }
+    @Test fun progressMigrationPersistsAndCascadesWithoutChangingCfi() {
+        val book = ImportBook(books).execute(fixture(), "book.epub").book
+        val locator = Locator("epubcfi(/6/2!/4/4/1:15)", "one.xhtml")
+        PositionRepository(db).save(book.id, locator)
+        db.writableDatabase.execSQL("DROP TABLE reading_progress")
+        db.writableDatabase.version = 2
+        db.close()
+        db = LibraryDatabase(RuntimeEnvironment.getApplication()); books = BookRepository(RuntimeEnvironment.getApplication(), db)
+        val progress = ProgressRepository(db)
+        assertTrue(progress.all().isEmpty())
+        progress.save(book.id, ReadingProgress(.42, "Chapter one"))
+        assertEquals(locator, PositionRepository(db).get(book.id))
+        assertEquals(ReadingProgress(.42, "Chapter one"), ProgressRepository(db).all()[book.id])
+        books.remove(book)
+        assertTrue(progress.all().isEmpty())
+    }
     @Test fun reconciliationRemovesAbandonedFilesAndMissingCatalogResources() {
         val book = ImportBook(books).execute(fixture(), "book.epub").book
         File(books.root, ".pending-abandoned").mkdirs()

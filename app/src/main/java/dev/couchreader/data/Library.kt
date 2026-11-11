@@ -38,19 +38,26 @@ data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false,
                               val spread: Boolean = false, val sleepMinutes: Int = 30) {
     companion object { val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0) }
 }
-class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 2) {
+class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE books(id TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, title TEXT NOT NULL, author TEXT NOT NULL, opf TEXT NOT NULL, imported INTEGER NOT NULL, opened INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT 'epub')")
+        createProgress(db)
         db.execSQL("CREATE TABLE positions(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, locator TEXT NOT NULL, updated INTEGER NOT NULL)")
+    }
+    private fun createProgress(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE, fraction REAL, chapter TEXT NOT NULL)")
     }
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) db.execSQL("ALTER TABLE books ADD COLUMN format TEXT NOT NULL DEFAULT 'epub'")
-        check(newVersion <= 2) { "A migration is required before changing the database version" }
+        if (oldVersion < 3) createProgress(db)
+        check(newVersion <= 3) { "A migration is required before changing the database version" }
     }
 }
 class BookRepository(context: Context, private val db: LibraryDatabase) {
     val root = File(context.filesDir, "books").apply { mkdirs() }
+    val locationCaches = File(context.filesDir, "book-locations").apply { mkdirs() }
+    fun locationCache(book: Book) = File(locationCaches, "${book.id}.json")
     val staging = File(context.cacheDir, "imports").apply { mkdirs() }
     @Synchronized fun books(): List<Book> = db.readableDatabase.rawQuery(
         "SELECT id, hash, title, author, opf, imported, opened, format FROM books ORDER BY opened DESC, imported DESC", null
@@ -75,6 +82,19 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
             throw failure
         } finally { sql.endTransaction() }
     }
+    @Synchronized fun cacheLocations(book: Book, locations: String) {
+        check(directory(book).isDirectory)
+        require(locations.length <= 32 * 1024 * 1024)
+        val array = org.json.JSONArray(locations)
+        require(array.length() > 0)
+        for (i in 0 until array.length()) require(array.getString(i).startsWith("epubcfi("))
+        val cache = android.util.AtomicFile(locationCache(book))
+        val output = cache.startWrite()
+        try {
+            output.write(JSONObject().put("version", 1).put("hash", book.hash).put("locations", array).toString().toByteArray())
+            cache.finishWrite(output)
+        } catch (failure: Exception) { cache.failWrite(output); throw failure }
+    }
     @Synchronized fun opened(book: Book) {
         db.writableDatabase.update("books", ContentValues().apply { put("opened", System.currentTimeMillis()) }, "id=?", arrayOf(book.id))
     }
@@ -82,10 +102,12 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
         // Delete catalog first. A crash leaves an orphan directory that reconciliation removes.
         db.writableDatabase.delete("books", "id=?", arrayOf(book.id))
         directory(book).deleteRecursively()
+        android.util.AtomicFile(locationCache(book)).delete()
     }
     @Synchronized fun reconcile() {
         staging.listFiles()?.forEach { it.deleteRecursively() }
         val known = books().associateBy { it.id }
+        locationCaches.listFiles()?.filter { it.name.substringBefore(".") !in known }?.forEach { it.delete() }
         root.listFiles()?.filter { it.name !in known }?.forEach { it.deleteRecursively() }
         known.values.filter { !File(directory(it), it.contentPath).isFile }.forEach(::remove)
     }
@@ -100,6 +122,23 @@ class PositionRepository(private val db: LibraryDatabase) {
     @Synchronized fun save(bookId: String, locator: Locator) {
         db.writableDatabase.insertWithOnConflict("positions", null, ContentValues().apply {
             put("book_id", bookId); put("locator", locator.encode()); put("updated", System.currentTimeMillis())
+        }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+}
+/** Derived display data only; resume positions remain in PositionRepository. */
+data class ReadingProgress(val fraction: Double?, val chapter: String)
+class ProgressRepository(private val db: LibraryDatabase) {
+    @Synchronized fun all(): Map<String, ReadingProgress> = db.readableDatabase.rawQuery(
+        "SELECT book_id, fraction, chapter FROM reading_progress", null
+    ).use { cursor -> buildMap {
+        while (cursor.moveToNext()) put(cursor.getString(0), ReadingProgress(
+            if (cursor.isNull(1)) null else cursor.getDouble(1), cursor.getString(2)))
+    } }
+    @Synchronized fun save(bookId: String, progress: ReadingProgress) {
+        require(progress.fraction == null || (progress.fraction.isFinite() && progress.fraction in 0.0..1.0))
+        db.writableDatabase.insertWithOnConflict("reading_progress", null, ContentValues().apply {
+            put("book_id", bookId); put("chapter", progress.chapter)
+            if (progress.fraction == null) putNull("fraction") else put("fraction", progress.fraction)
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 }

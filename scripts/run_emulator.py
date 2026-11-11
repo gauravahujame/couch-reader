@@ -8,7 +8,7 @@ import time
 PROJECT = Path(__file__).resolve().parents[1]
 SDK = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Library/Android/sdk'))
 ADB = SDK / 'platform-tools/adb'
-APK = PROJECT / 'dist/CouchReader-0.3.1-debug.apk'
+APK = PROJECT / 'dist/CouchReader-0.4.0-debug.apk'
 AVD = 'CouchReaderTV'
 LOG = PROJECT / 'outputs/emulator/emulator.log'
 

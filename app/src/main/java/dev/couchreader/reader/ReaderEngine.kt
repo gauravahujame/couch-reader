@@ -27,7 +27,9 @@ interface ReaderEngine {
 }
 @SuppressLint("SetJavaScriptEnabled")
 class EpubReaderEngine(context: Context, books: BookRepository, book: Book, locator: Locator?,
-                       prefs: ReadingPreferences, private val onEvent: (String, String) -> Unit) : ReaderEngine {
+                       prefs: ReadingPreferences, private val indexOnly: Boolean = false, private val onEvent: (String, String) -> Unit) : ReaderEngine {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    @Volatile private var closed = false
     private val directory = books.directory(book).canonicalFile
     override val view = WebView(context)
     init {
@@ -46,7 +48,12 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
             }
             addJavascriptInterface(object {
                 @JavascriptInterface fun event(type: String, payload: String) {
-                    if (payload.length <= 512 * 1024) post { onEvent(type, payload) }
+                    if (!closed && payload.length <= 512 * 1024) main.post { if (!closed) onEvent(type, payload) }
+                }
+                @JavascriptInterface fun cacheLocations(value: String) {
+                    if (!indexOnly || closed) return
+                    val success = runCatching { books.cacheLocations(book, value) }.isSuccess
+                    main.post { if (!closed) onEvent(if (success) "indexed" else "indexError", "{}") }
                 }
             }, "ReaderBridge")
             webViewClient = object : WebViewClient() {
@@ -57,6 +64,7 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
                     val path = uri.path ?: return denied()
                     return try {
                         val stream = when {
+                            path == "/reader/locations.json" -> books.locationCache(book).inputStream()
                             path.startsWith("/reader/") -> context.assets.open(path.removePrefix("/"))
                             path.startsWith("/book/") -> {
                                 val file = File(directory, path.removePrefix("/book/")).canonicalFile
@@ -69,6 +77,7 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
                             "html", "htm" -> "text/html"
                             "xhtml" -> "application/xhtml+xml"
                             "js" -> "application/javascript"
+                            "json" -> "application/json"
                             "css" -> "text/css"
                             "ttf" -> "font/ttf"
                             "png" -> "image/png"
@@ -84,7 +93,7 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
                 override fun onPageFinished(view: WebView, url: String) {
                     if (url != "https://reader.invalid/reader/index.html") return
                     val config = JSONObject().put("url", "https://reader.invalid/book/${book.contentPath}")
-                        .put("preferences", preferencesJson(prefs))
+                        .put("preferences", preferencesJson(prefs)).put("indexOnly", indexOnly).put("hash", book.hash)
                     locator?.let { config.put("locator", JSONObject(it.encode())) }
                     view.evaluateJavascript("openBook($config)", null)
                 }
@@ -94,8 +103,10 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
     }
     private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
     private fun preferencesJson(value: ReadingPreferences) = JSONObject().put("fontSize", ReadingPreferences.sizes[value.size]).put("dark", value.dark).put("spread", value.spread)
+    fun refreshProgress() { view.evaluateJavascript("refreshProgress()", null) }
+    fun progressAt(locator: Locator?) { view.evaluateJavascript("indexProgress(${locator?.let { JSONObject(it.encode()) } ?: "null"})", null) }
     override fun turn(forward: Boolean) { view.evaluateJavascript("turn($forward)", null) }
     override fun preferences(value: ReadingPreferences) { view.evaluateJavascript("preferences(${preferencesJson(value)})", null) }
     override fun chapter(href: String) { view.evaluateJavascript("chapter(${JSONObject.quote(href)})", null) }
-    override fun close() { view.stopLoading(); view.removeJavascriptInterface("ReaderBridge"); view.destroy() }
+    override fun close() { closed = true; view.stopLoading(); view.removeJavascriptInterface("ReaderBridge"); view.destroy() }
 }

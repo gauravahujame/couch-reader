@@ -19,9 +19,9 @@ Minimum Android API 26. The debug APK is signed for sideloading. Actual-TV compa
 1. Open **Add book** on the TV. Connect the uploading device to the same trusted home network.
 2. Scan the QR code, or enter the complete address shown. Select one EPUB or PDF, up to 50 MiB, and choose **Send to TV**. Keep Add book open until completion.
 3. Choose **Read now**, or select the book in the library.
-4. **Left / Right** turns pages. For PDFs, **Up / Down** scrolls within a fixed page; EPUB text-size and chapter controls apply to EPUBs only. **OK** opens text size, theme, and chapters. **Back** closes controls, then returns to the library. Up/Down does not move EPUB text. Held page-turn repeats are ignored.
+4. **Left / Right** turns pages. For PDFs, **Up / Down** scrolls within a fixed page; EPUB text-size and chapter controls apply to EPUBs only. **OK** shows the current chapter and reading progress alongside text size, theme, and chapters. **Back** closes controls, then returns to the library. Up/Down does not move EPUB text. Held page-turn repeats are ignored.
 5. Open **Settings** from the library or **All settings →** in reader controls. Up/Down selects a row; Left/Right or OK changes it immediately. Text size and two-page spread apply to EPUBs. Spread defaults Off; reading inactivity defaults to 30 minutes, then allows the TV’s own screensaver/sleep to take over. Theme stays in quick controls. Back returns to your book.
-6. Progress saves automatically after each completed page turn. Book actions offer confirmed removal.
+6. Library cards show a reading progress bar. EPUB locations are generated in the background once, cached privately, and reused across opens and text-size changes. Previously opened EPUBs without progress are indexed from the library; unopened books start at zero. Resume positions remain CFIs. Progress saves automatically after each completed page turn. Book actions offer confirmed removal.
 
 While Add book stays open, the TV remains awake and the QR code renews automatically every ten minutes. Old tokens expire; scan the current code to reconnect. Leaving Add book or putting the app in the background stops the upload service. Guest Wi-Fi may block device-to-device traffic. Upload uses local HTTP and must stay on a trusted home network. No accounts, internet reading dependency, analytics, or cloud storage.
 

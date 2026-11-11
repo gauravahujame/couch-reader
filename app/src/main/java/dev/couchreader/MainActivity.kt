@@ -31,6 +31,13 @@ class MainActivity : Activity() {
     private lateinit var db: LibraryDatabase
     private lateinit var books: BookRepository
     private lateinit var positions: PositionRepository
+    private lateinit var progress: ProgressRepository
+    private var readerProgress = ReadingProgress(null, "Loading chapter…")
+    private val liveProgress = mutableMapOf<String, ReadingProgress>()
+    private val indexQueue = java.util.ArrayDeque<Book>()
+    private val indexing = mutableSetOf<String>()
+    private val failedIndexes = mutableSetOf<String>()
+    private var indexEngine: EpubReaderEngine? = null
     private lateinit var preferences: PreferencesRepository
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
@@ -75,7 +82,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         db = LibraryDatabase(this); books = BookRepository(this, db)
-        positions = PositionRepository(db); preferences = PreferencesRepository(this)
+        positions = PositionRepository(db); progress = ProgressRepository(db); preferences = PreferencesRepository(this)
         root = FrameLayout(this); setContentView(root)
         loading("Preparing your library…")
         io.execute {
@@ -108,6 +115,7 @@ class MainActivity : Activity() {
         stopPairing(); closeReader(); screen = "library"
         val content = page()
         val catalog = books.books()
+        val progressByBook = progress.all() + liveProgress
         val add = action("＋  Add book", primary = true) { showImport() }
         val headerActions = row()
         val settingsButton = action("Settings") { settings() }
@@ -176,6 +184,11 @@ class MainActivity : Activity() {
                 }
                 card.addView(cover, LinearLayout.LayoutParams(-1, dp(160)))
                 card.space(8)
+                val saved = progressByBook[book.id]
+                val indicator = column().apply { tag = "progress-${book.id}" }
+                fillProgress(indicator, saved ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "Open to calculate progress" else "Calculating progress…")
+                card.addView(indicator, LinearLayout.LayoutParams(-1, -2))
+                card.space(5)
                 val read = action(book.title) { open(book) }.apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                     contentDescription = "Read ${book.title} by ${book.author}"
@@ -196,6 +209,71 @@ class MainActivity : Activity() {
         content.space(8)
         content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open", 11f, Palette.muted).apply { letterSpacing = .08f })
         (if (restoreSettingsFocus) settingsButton else restore ?: add).requestFocus(); restoreSettingsFocus = false
+        catalog.filter { it.format == "epub" && it.opened > 0 && progressByBook[it.id]?.fraction == null && it.id !in failedIndexes }.forEach(::queueIndex)
+    }
+    private fun progressText(value: ReadingProgress): String {
+        val percent = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" } ?: if (currentBook?.id in failedIndexes) "Progress unavailable" else "Calculating progress…"
+        return if (value.chapter.isBlank()) percent else "${value.chapter} · $percent"
+    }
+    private fun fillProgress(parent: LinearLayout, value: ReadingProgress, pendingMessage: String = "Calculating progress…") {
+        parent.removeAllViews()
+        val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000; progress = ((value.fraction ?: 0.0) * 1000).toInt()
+            isIndeterminate = false; isFocusable = false
+            progressTintList = android.content.res.ColorStateList.valueOf(Palette.green)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Palette.line)
+            contentDescription = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()} percent read" } ?: "Progress not calculated yet"
+        }
+        parent.addView(bar, LinearLayout.LayoutParams(-1, dp(6)))
+        val unknown = if (parent.tag.toString().removePrefix("progress-") in failedIndexes) "Progress unavailable" else pendingMessage
+        parent.addView(label(value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" } ?: unknown, 12f, Palette.muted))
+    }
+    private fun queueIndex(book: Book) {
+        if (!indexing.add(book.id)) return
+        failedIndexes.remove(book.id)
+        indexQueue.addLast(book)
+        startNextIndex()
+    }
+    private fun startNextIndex() {
+        if (indexEngine != null || indexQueue.isEmpty() || isDestroyed) return
+        val book = indexQueue.removeFirst()
+        fun finish() {
+            indexing.remove(book.id)
+            indexEngine?.close(); indexEngine = null
+            startNextIndex()
+        }
+        indexEngine = EpubReaderEngine(this, books, book, null, preferences.get(), indexOnly = true) { type, payload ->
+            when (type) {
+                "indexed" -> {
+                    if (currentBook?.id == book.id && engine is EpubReaderEngine) {
+                        (engine as EpubReaderEngine).refreshProgress(); finish()
+                    } else io.execute {
+                        val locator = positions.get(book.id)
+                        main.post { if (!isDestroyed) indexEngine?.progressAt(locator) }
+                    }
+                }
+                "readingInfo" -> {
+                    if (currentBook?.id == book.id && engine is EpubReaderEngine) {
+                        (engine as EpubReaderEngine).refreshProgress(); finish()
+                        return@EpubReaderEngine
+                    }
+                    val data = JSONObject(payload)
+                    val value = ReadingProgress(if (data.isNull("fraction")) null else data.getDouble("fraction"), data.optString("chapter"))
+                    liveProgress[book.id] = value
+                    io.execute {
+                        if (books.books().any { it.id == book.id }) progress.save(book.id, value)
+                    }
+                    root.findViewWithTag<LinearLayout>("progress-${book.id}")?.let { fillProgress(it, value) }
+                    finish()
+                }
+                "indexError", "error" -> {
+                    failedIndexes.add(book.id); indexing.remove(book.id)
+                    if (currentBook?.id == book.id) root.findViewWithTag<TextView>("reader-progress")?.text = progressText(readerProgress)
+                    root.findViewWithTag<LinearLayout>("progress-${book.id}")?.let { fillProgress(it, ReadingProgress(null, "")) }
+                    finish()
+                }
+            }
+        }
     }
     private fun bookActions(book: Book) {
         activeDialog = AlertDialog.Builder(this).setTitle(book.title).setItems(arrayOf("Read", "Remove from device")) { _, which ->
@@ -288,7 +366,7 @@ class MainActivity : Activity() {
     internal fun open(book: Book) {
         stopPairing(); closeReader(); screen = "reader"; currentBook = book; selectedBook = book.id
         val generation = readerGeneration
-        ready = false; chapters = emptyList()
+        ready = false; chapters = emptyList(); readerProgress = ReadingProgress(null, "Loading chapter…")
         loading("Opening ${book.title}…")
         io.execute {
             val position = positions.get(book.id)
@@ -299,8 +377,16 @@ class MainActivity : Activity() {
                 val eventHandler: (String, String) -> Unit = event@ { type, payload ->
                     if ((screen != "reader" && !(screen == "settings" && settingsFromReader)) || currentBook?.id != book.id || generation != readerGeneration) return@event
                     when (type) {
-                        "ready" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
+                        "ready" -> { if (book.format == "epub" && !JSONObject(payload).optBoolean("indexed")) queueIndex(book); ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
                         "chapters" -> { val list = JSONArray(payload); chapters = (0 until list.length()).map { list.getJSONObject(it).let { item -> item.getString("title") to item.getString("href") } } }
+                        "readingInfo" -> {
+                            val data = JSONObject(payload)
+                            val value = ReadingProgress(if (data.isNull("fraction")) null else data.getDouble("fraction"), data.optString("chapter", "Chapter"))
+                            readerProgress = value
+                            liveProgress[book.id] = value
+                            root.findViewWithTag<TextView>("reader-progress")?.text = progressText(value)
+                            io.execute { progress.save(book.id, value) }
+                        }
                         "location" -> {
                             val data = JSONObject(payload)
                             val locator = if (book.format == "pdf") Locator.decode(payload) ?: return@event
@@ -316,7 +402,7 @@ class MainActivity : Activity() {
                 }
                 val renderer: ReaderEngine = if (book.format == "pdf")
                     PdfReaderEngine(this, books, book, position, preferences.get(), eventHandler)
-                else EpubReaderEngine(this, books, book, position, preferences.get(), eventHandler)
+                else EpubReaderEngine(this, books, book, position, preferences.get(), onEvent = eventHandler)
                 engine = renderer
                 root.removeAllViews(); root.addView(renderer.view, FrameLayout.LayoutParams(-1, -1))
                 root.addView(label("Opening book…", 22f).apply { tag = "loading"; setBackgroundColor(Palette.paper); setPadding(dp(20), dp(20), dp(20), dp(20)) }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
@@ -349,7 +435,9 @@ class MainActivity : Activity() {
     private fun controls() {
         if (engine == null) return
         val panel = overlayPanel("Make yourself comfortable")
-        panel.addView(label(currentBook?.title.orEmpty(), 16f, Palette.muted)); panel.space(12)
+        panel.addView(label(currentBook?.title.orEmpty(), 16f, Palette.muted)); panel.space(8)
+        panel.addView(label(progressText(readerProgress), 17f, Palette.muted).apply { tag = "reader-progress" })
+        panel.space(12)
         var pref = preferences.get()
         val isPdf = currentBook?.format == "pdf"
         val sizeLabel = label("Text size  ·  ${ReadingPreferences.sizes[pref.size]} px", 17f)
@@ -441,7 +529,7 @@ class MainActivity : Activity() {
         io.execute {
             val result = runCatching {
                 val count = books.books().size
-                val bytes = books.root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                val bytes = listOf(books.root, books.locationCaches).sumOf { directory -> directory.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
                 "$count ${if (count == 1) "book" else "books"} stored · ${android.text.format.Formatter.formatFileSize(this, bytes)} used"
             }.getOrDefault("Storage information unavailable")
             main.post { if (settingsView === content) totals.text = result }
@@ -494,7 +582,7 @@ class MainActivity : Activity() {
     }
     override fun onStart() { super.onStart(); if (::preferences.isInitialized) resetSleepTimer(); if (::root.isInitialized && screen == "import-paused") showImport() }
     override fun onDestroy() {
-        stopPairing(); closeReader(); io.shutdown()
+        stopPairing(); closeReader(); indexQueue.clear(); indexEngine?.close(); indexEngine = null; io.shutdown()
         super.onDestroy()
     }
 }

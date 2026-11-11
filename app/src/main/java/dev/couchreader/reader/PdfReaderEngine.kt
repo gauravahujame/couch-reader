@@ -114,6 +114,9 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
     private fun save() {
         val offset = if (maxScroll() == 0) 0f else scroll.scrollY.toFloat() / maxScroll()
         onEvent("location", Locator.pdf(page, offset.coerceIn(0f, 1f)).encode())
+        val fraction = if (pageCount <= 1) { if (maxScroll() == 0) 1.0 else offset.toDouble() } else (page + if (page == pageCount - 1 && maxScroll() == 0) 1.0 else offset.toDouble()) / pageCount
+        onEvent("readingInfo", JSONObject().put("chapter", "Page ${page + 1} of $pageCount")
+            .put("fraction", fraction.coerceIn(0.0, 1.0)).toString())
     }
     override fun turn(forward: Boolean) {
         if (closed) return
