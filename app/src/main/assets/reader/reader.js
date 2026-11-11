@@ -85,7 +85,7 @@ window.openBook=function(config){
   }
   rendition=book.renderTo('pages',{width:'100%',height:'100%',flow:'paginated',spread:'none',gap:0,allowScriptedContent:false,allowPopups:false});
   applyPreferences(config.preferences);
-  rendition.on('relocated',location=>{lastLocation=location;if(location.start&&location.start.cfi){tell('location',{cfi:pendingAnchor?.cfi||location.start.cfi,href:pendingAnchor?.href||location.start.href,atStart:location.atStart,atEnd:location.atEnd});readingInfo();}});
+  rendition.on('relocated',location=>{lastLocation=location;pageList=[];if(location.start&&location.start.cfi){tell('location',{cfi:pendingAnchor?.cfi||location.start.cfi,href:pendingAnchor?.href||location.start.href,atStart:location.atStart,atEnd:location.atEnd});readingInfo();tell('page');}});
   rendition.on('displayError',()=>tell('error',{message:'Unable to render this section. Try another chapter.'}));
   await book.ready;
   if(document.fonts)await document.fonts.load(config.preferences.fontSize+'px Literata');
@@ -105,3 +105,122 @@ window.preferences=function(p){return serial(async()=>{// Preserve the original 
  if(!pendingAnchor){const start=rendition.currentLocation()?.start;if(start?.cfi)pendingAnchor={cfi:start.cfi,href:start.href};}
  applyPreferences(p);if(pendingAnchor)await rendition.display(pendingAnchor.cfi);});};
 window.chapter=function(href){return serial(()=>{pendingAnchor=null;return rendition.display(href||undefined);});};
+/* Read-aloud. Each section document is split into sentences once; a sentence is a DOM Range, so the
+   book markup is never modified and CFIs stay valid. The highlight uses the CSS Custom Highlight API. */
+let pageList=[];
+const BLOCKS='p,h1,h2,h3,h4,h5,h6,li,blockquote,dd,dt,figcaption,caption,td,th,pre,div,section,article,aside,header,footer,body';
+const sentenceCache=new WeakMap();
+const cleanText=text=>text.replace(/\s+/g,' ').trim();
+function regexSentences(text){
+ const out=[],pattern=/[^.!?…]+(?:[.!?…]+["'”’)\]]*|$)/g;let match;
+ while((match=pattern.exec(text)))out.push([match.index,match.index+match[0].length]);
+ return out;
+}
+function locateOffset(nodes,offset,isEnd){
+ for(let i=nodes.length-1;i>=0;i--){const item=nodes[i];if(isEnd?item.start<offset:item.start<=offset)return{node:item.node,offset:offset-item.start};}
+ return{node:nodes[0].node,offset:0};
+}
+function documentSentences(doc){
+ const cached=sentenceCache.get(doc);if(cached)return cached;
+ const blocks=[];let current=null;
+ const walker=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);
+ for(let node=walker.nextNode();node;node=walker.nextNode()){
+  const parent=node.parentElement;
+  // Footnote reference markers are skipped so the voice does not read "12" mid-sentence.
+  if(!parent||parent.closest('script,style,rt,sup a,a sup'))continue;
+  const block=parent.closest(BLOCKS);
+  if(!current||current.block!==block){current={block,nodes:[],text:''};blocks.push(current);}
+  current.nodes.push({node,start:current.text.length});current.text+=node.data;
+ }
+ const Segmenter=doc.defaultView?.Intl?.Segmenter||(typeof Intl!=='undefined'?Intl.Segmenter:undefined);
+ let segmenter=null;
+ try{if(Segmenter)segmenter=new Segmenter(doc.documentElement.lang||undefined,{granularity:'sentence'});}catch(ignored){}
+ const sentences=[];
+ for(const block of blocks){
+  const pieces=segmenter?Array.from(segmenter.segment(block.text),piece=>[piece.index,piece.index+piece.segment.length]):regexSentences(block.text);
+  for(const [start,end] of pieces){
+   const raw=block.text.slice(start,end);
+   if(!/[\p{L}\p{N}]/u.test(raw))continue;
+   const lead=raw.length-raw.trimStart().length,trail=raw.length-raw.trimEnd().length;
+   const from=locateOffset(block.nodes,start+lead,false),to=locateOffset(block.nodes,end-trail,true);
+   const range=doc.createRange();
+   try{range.setStart(from.node,from.offset);range.setEnd(to.node,to.offset);}catch(ignored){continue;}
+   sentences.push({range,text:cleanText(raw)});
+  }
+ }
+ sentenceCache.set(doc,sentences);return sentences;
+}
+function visibleContents(){
+ const location=rendition?.currentLocation();
+ if(!location?.start?.cfi||!location?.end?.cfi)return null;
+ const all=rendition.getContents();
+ const contents=all.find(item=>item.sectionIndex===location.start.index)||all[0];
+ if(!contents)return null;
+ return{contents,start:contents.range(location.start.cfi),end:contents.range(location.end.cfi)};
+}
+window.pageSentences=function(id){
+ serial(async()=>{
+  let items=[];
+  try{
+   const visible=opening?null:visibleContents();
+   if(visible){
+    const{start,end}=visible;
+    // EPUB.js's visible start/end can sit a word off, so which screen a sentence is on is decided by
+    // where its first and last characters are laid out. Columns run left to right inside the
+    // section iframe; one screen (one page, or a spread) is layout.delta pixels wide.
+    const delta=rendition.manager?.layout?.delta||document.documentElement.clientWidth;
+    const screenOf=(node,offset,last)=>{
+     const length=node.nodeType===3?node.length:node.childNodes.length;
+     const from=last?Math.max(0,offset-1):offset,to=Math.min(from+1,length);
+     if(to<=from)return null;
+     const probe=node.ownerDocument.createRange();
+     try{probe.setStart(node,from);probe.setEnd(node,to);}catch(ignored){return null;}
+     const rect=probe.getClientRects()[0];
+     return rect&&(rect.width||rect.height)?Math.floor((rect.left+rect.width/2)/delta):null;
+    };
+    const screen=screenOf(start.startContainer,start.startOffset,false);
+    const place=s=>{
+     const first=screen===null?null:screenOf(s.range.startContainer,s.range.startOffset,false);
+     const last=screen===null?null:screenOf(s.range.endContainer,s.range.endOffset,true);
+     if(first===null||last===null)return{on:start.comparePoint(s.range.endContainer,s.range.endOffset)>0&&end.comparePoint(s.range.startContainer,s.range.startOffset)<0,
+      continued:start.comparePoint(s.range.startContainer,s.range.startOffset)<0};
+     return{on:first<=screen&&last>=screen,continued:first<screen};
+    };
+    const placed=documentSentences(visible.contents.document).map(s=>({s,where:place(s)})).filter(item=>item.where.on);
+    pageList=placed.map(item=>item.s);
+    items=placed.map(({s,where})=>{
+     let visibleLength=s.text.length;
+     if(end.comparePoint(s.range.endContainer,s.range.endOffset)>0){
+      const shown=s.range.cloneRange();shown.setEnd(end.startContainer,end.startOffset);
+      visibleLength=Math.min(s.text.length,cleanText(shown.toString()).length);
+     }
+     return{text:s.text,continued:where.continued,visible:visibleLength};
+    });
+   }else pageList=[];
+  }catch(ignored){pageList=[];items=[];}
+  ReaderBridge.sentences(id,JSON.stringify(items));
+ });
+};
+let highlightedWindow=null,highlightedCfi=null;
+function clearReadAloudHighlight(){
+ try{highlightedWindow?.CSS?.highlights?.delete('readaloud');}catch(ignored){}
+ if(highlightedCfi){try{rendition.annotations.remove(highlightedCfi,'highlight');}catch(ignored){}}
+ highlightedWindow=null;highlightedCfi=null;
+}
+window.highlightSentence=function(index){
+ clearReadAloudHighlight();
+ const sentence=pageList[index];if(!sentence)return;
+ const doc=sentence.range.startContainer.ownerDocument,win=doc.defaultView;
+ const fill=currentPreferences?.dark?'rgba(214, 170, 90, 0.38)':'rgba(170, 107, 43, 0.26)';
+ if(win?.CSS?.highlights&&win.Highlight){
+  let style=doc.getElementById('readaloud-style');
+  if(!style){style=doc.createElement('style');style.id='readaloud-style';doc.head.appendChild(style);}
+  style.textContent='::highlight(readaloud){background-color:'+fill+';}';
+  win.CSS.highlights.set('readaloud',new win.Highlight(sentence.range));highlightedWindow=win;
+ }else{
+  const contents=rendition.getContents().find(item=>item.document===doc);
+  if(!contents)return;
+  highlightedCfi=contents.cfiFromRange(sentence.range);
+  rendition.annotations.highlight(highlightedCfi,{},null,'readaloud',{fill,'fill-opacity':'1','mix-blend-mode':'normal'});
+ }
+};

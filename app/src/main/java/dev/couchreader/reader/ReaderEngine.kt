@@ -23,13 +23,40 @@ interface ReaderEngine {
     fun turn(forward: Boolean)
     fun preferences(value: ReadingPreferences)
     fun chapter(href: String)
+    /**
+     * Read-aloud: the sentences on the visible page, in reading order, delivered on the UI thread.
+     * The list is empty when the page has no readable text. Engines emit a "page" event whenever a
+     * new page is shown, after which the previous list is stale.
+     */
+    fun sentences(callback: (List<SpeechSentence>) -> Unit) { callback(emptyList()) }
+    /** Highlights sentence [index] of the last [sentences] result; -1 clears the highlight. */
+    fun highlight(index: Int) {}
     fun close()
+}
+
+/**
+ * One spoken unit. [continued] means the sentence began on an earlier page. [visibleLength] is how
+ * many characters of [text] are on the visible page; less than the full length when it runs onto the next.
+ */
+data class SpeechSentence(val text: String, val continued: Boolean = false, val visibleLength: Int = text.length) {
+    companion object {
+        fun parse(payload: String): List<SpeechSentence> = runCatching {
+            val list = org.json.JSONArray(payload)
+            (0 until list.length()).map { i ->
+                val item = list.getJSONObject(i); val text = item.getString("text")
+                SpeechSentence(text, item.optBoolean("continued"), item.optInt("visible", text.length).coerceIn(0, text.length))
+            }
+        }.getOrDefault(emptyList())
+    }
 }
 @SuppressLint("SetJavaScriptEnabled")
 class EpubReaderEngine(context: Context, books: BookRepository, book: Book, locator: Locator?,
                        prefs: ReadingPreferences, private val indexOnly: Boolean = false, private val onEvent: (String, String) -> Unit) : ReaderEngine {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     @Volatile private var closed = false
+    // Only the newest read-aloud request is answered; written and read on the UI thread.
+    @Volatile private var sentenceRequest = 0
+    private var sentenceCallback: ((List<SpeechSentence>) -> Unit)? = null
     private val directory = books.directory(book).canonicalFile
     override val view = WebView(context)
     init {
@@ -49,6 +76,14 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
             addJavascriptInterface(object {
                 @JavascriptInterface fun event(type: String, payload: String) {
                     if (!closed && payload.length <= 512 * 1024) main.post { if (!closed) onEvent(type, payload) }
+                }
+                @JavascriptInterface fun sentences(id: Int, payload: String) {
+                    if (closed || indexOnly || payload.length > 2 * 1024 * 1024) return
+                    val parsed = SpeechSentence.parse(payload)
+                    main.post {
+                        if (closed || id != sentenceRequest) return@post
+                        val callback = sentenceCallback; sentenceCallback = null; callback?.invoke(parsed)
+                    }
                 }
                 @JavascriptInterface fun cacheLocations(value: String) {
                     if (!indexOnly || closed) return
@@ -108,5 +143,10 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
     override fun turn(forward: Boolean) { view.evaluateJavascript("turn($forward)", null) }
     override fun preferences(value: ReadingPreferences) { view.evaluateJavascript("preferences(${preferencesJson(value)})", null) }
     override fun chapter(href: String) { view.evaluateJavascript("chapter(${JSONObject.quote(href)})", null) }
+    override fun sentences(callback: (List<SpeechSentence>) -> Unit) {
+        sentenceCallback = callback
+        view.evaluateJavascript("pageSentences(${++sentenceRequest})", null)
+    }
+    override fun highlight(index: Int) { view.evaluateJavascript("highlightSentence($index)", null) }
     override fun close() { closed = true; view.stopLoading(); view.removeJavascriptInterface("ReaderBridge"); view.destroy() }
 }

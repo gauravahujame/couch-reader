@@ -26,7 +26,8 @@ class OptionRow(context: Context, title: String, private val value: () -> String
         background = shape(Palette.white, border = Palette.line, stroke = context.dp(1))
         refresh()
     }
-    private fun refresh() { display.text = "◀  ${value()}  ▶"; contentDescription = "${(getChildAt(0) as android.widget.TextView).text}, ${value()}" }
+    /** Redraws the value, for values that change outside this row (such as a list that loads later). */
+    fun refresh() { display.text = "◀  ${value()}  ▶"; contentDescription = "${(getChildAt(0) as android.widget.TextView).text}, ${value()}" }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {

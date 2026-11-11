@@ -3,6 +3,8 @@ package dev.couchreader.reader
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
@@ -28,6 +30,15 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
     private val frame = FrameLayout(context)
     private val scroll = ScrollView(context)
     private val image = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_XY; isFocusable = false }
+    // The read-aloud highlight sits over the page image, outside its dark-mode inversion filter.
+    private val marker = SentenceMarker(context)
+    private val pageFrame = FrameLayout(context)
+    private val file = File(books.directory(book), book.contentPath)
+    private val textWorker = Executors.newSingleThreadExecutor()
+    private var text: PdfText? = null
+    private var pageSentences = listOf<PdfSentence>()
+    private var pendingSentences: ((List<SpeechSentence>) -> Unit)? = null
+    private var sentenceRequest = 0
     override val view: View get() = frame
     override val reflowable = false
     private var descriptor: ParcelFileDescriptor? = null
@@ -49,7 +60,9 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
     init {
         scroll.isFocusable = false; scroll.isFillViewport = false
         scroll.isVerticalScrollBarEnabled = false
-        scroll.addView(image, FrameLayout.LayoutParams(-1, -2))
+        pageFrame.addView(image, FrameLayout.LayoutParams(-1, -2))
+        pageFrame.addView(marker, FrameLayout.LayoutParams(-1, -1))
+        scroll.addView(pageFrame, FrameLayout.LayoutParams(-1, -2))
         frame.addView(scroll, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         scroll.setOnScrollChangeListener { _, _, _, _, _ -> if (!loading && !changingPage && !closed) save() }
         preferences(prefs)
@@ -60,7 +73,7 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
                 frame.removeOnLayoutChangeListener(this)
                 worker.execute {
                 try {
-                    descriptor = ParcelFileDescriptor.open(File(books.directory(book), book.contentPath), ParcelFileDescriptor.MODE_READ_ONLY)
+                    descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
                     renderer = PdfRenderer(descriptor!!); pageCount = renderer!!.pageCount
                     val invalid = page !in 0 until pageCount
                     page = page.coerceIn(0, pageCount - 1)
@@ -95,6 +108,7 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
                 frame.post {
                     if (closed) { rendered.recycle(); return@post }
                     changingPage = true
+                    pageSentences = emptyList(); sentenceRequest++; marker.show(emptyList())
                     image.layoutParams = FrameLayout.LayoutParams(-1, (scroll.width.toDouble() * rendered.height / rendered.width).toInt().coerceIn(1, 1_000_000))
                     image.setImageBitmap(rendered)
                     val previous = bitmap; bitmap = rendered; previous?.recycle()
@@ -106,6 +120,8 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
                             changingPage = false; loading = false
                             save()
                             if (!initialized) { initialized = true; onEvent("ready", "{}") }
+                            onEvent("page", "{}")
+                            pendingSentences?.let { pendingSentences = null; sentences(it) }
                             val jump = pendingJump; pendingJump = null
                             if (jump != null) chapter("page:$jump") else if (pendingTurns.isNotEmpty()) turn(pendingTurns.removeFirst())
                         }
@@ -137,6 +153,7 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
     }
     override fun preferences(value: ReadingPreferences) {
         frame.setBackgroundColor(if (value.dark) Color.rgb(32, 40, 34) else Color.rgb(245, 240, 229))
+        marker.color = if (value.dark) Color.argb(110, 214, 170, 90) else Color.argb(80, 170, 107, 43)
         image.colorFilter = if (value.dark) ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
             -1f,0f,0f,0f,255f, 0f,-1f,0f,0f,255f, 0f,0f,-1f,0f,255f, 0f,0f,0f,1f,0f
         ))) else null
@@ -149,11 +166,51 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
         if (pageCount == 0) return
         page = target.coerceIn(0, pageCount - 1); render()
     }
+    override fun sentences(callback: (List<SpeechSentence>) -> Unit) {
+        if (closed) return
+        if (loading || pageCount == 0) { pendingSentences = callback; return }
+        val index = page; val request = ++sentenceRequest
+        textWorker.execute {
+            val found = runCatching { (text ?: PdfText(frame.context, file).also { text = it }).sentences(index) }.getOrDefault(emptyList())
+            frame.post {
+                if (closed || request != sentenceRequest || index != page) return@post
+                pageSentences = found
+                callback(found.map { SpeechSentence(it.text) })
+            }
+        }
+    }
+    override fun highlight(index: Int) {
+        val sentence = pageSentences.getOrNull(index)
+        marker.show(sentence?.rects ?: emptyList())
+        val rects = sentence?.rects?.takeIf { it.isNotEmpty() } ?: return
+        // Keep the spoken sentence in view: if any of it is off screen, bring its top to a quarter down.
+        val top = (rects.minOf { it.top } * image.height).toInt(); val bottom = (rects.maxOf { it.bottom } * image.height).toInt()
+        if (top < scroll.scrollY || bottom > scroll.scrollY + scroll.height)
+            scroll.smoothScrollTo(0, (top - scroll.height / 4).coerceIn(0, maxScroll()))
+    }
     override fun close() {
         closed = true
-        pendingTurns.clear()
+        pendingTurns.clear(); pendingSentences = null
+        textWorker.execute { text?.close(); text = null }
+        textWorker.shutdown()
         image.setImageDrawable(null); bitmap?.recycle(); bitmap = null
         worker.execute { renderer?.close(); descriptor?.close() }
         worker.shutdown()
+    }
+}
+
+/** Draws the read-aloud highlight: one rounded box per printed line, in page fractions. */
+private class SentenceMarker(context: Context) : View(context) {
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var rects = listOf<RectF>()
+    var color = Color.argb(80, 170, 107, 43)
+        set(value) { field = value; invalidate() }
+    init { isFocusable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    fun show(value: List<RectF>) { rects = value; invalidate() }
+    override fun onDraw(canvas: Canvas) {
+        paint.color = color
+        val pad = width * .004f
+        for (rect in rects) canvas.drawRoundRect(rect.left * width - pad, rect.top * height - pad,
+            rect.right * width + pad, rect.bottom * height + pad, pad * 2, pad * 2, paint)
     }
 }

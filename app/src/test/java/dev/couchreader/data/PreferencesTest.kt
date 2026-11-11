@@ -23,6 +23,18 @@ class PreferencesTest {
             assertEquals(value, PreferencesRepository(context).get())
             assertEquals(2, storage.getInt("version", 0))
         }
+        for (rate in ReadingPreferences.speechRates) {
+            val value = ReadingPreferences(speechRate = rate)
+            PreferencesRepository(context).save(value)
+            assertEquals(value, PreferencesRepository(context).get())
+        }
+        for (voice in listOf("en-in-x-ena-local", "hi-in-x-hia-local", "")) {
+            val value = ReadingPreferences(voice = voice)
+            PreferencesRepository(context).save(value)
+            assertEquals(value, PreferencesRepository(context).get())
+        }
+        storage.edit().putInt("speechRate", 42).apply()
+        assertEquals(100, PreferencesRepository(context).get().speechRate)
         storage.edit().putInt("sleepMinutes", -2).putInt("size", 100).apply()
         assertEquals(30, PreferencesRepository(context).get().sleepMinutes)
         assertEquals(5, PreferencesRepository(context).get().size)

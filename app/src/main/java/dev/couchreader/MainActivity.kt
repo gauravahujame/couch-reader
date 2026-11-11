@@ -60,6 +60,12 @@ class MainActivity : Activity() {
     private var settingsFromReader = false
     private var pendingReaderError: String? = null
     private var restoreSettingsFocus = false
+    internal var readAloud: ReadAloud? = null
+        private set
+    private var readAloudChip: TextView? = null
+    // Lives while Settings is open: lists voices and plays their samples.
+    private var voiceSamples: VoiceSamples? = null
+    private val fadeChip = Runnable { readAloudChip?.animate()?.alpha(0f)?.setDuration(400)?.start() }
     internal val sleepTimer = Runnable { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     private fun resetSleepTimer() {
         main.removeCallbacks(sleepTimer)
@@ -464,9 +470,10 @@ class MainActivity : Activity() {
                                 else Locator(data.getString("cfi"), data.getString("href"))
                             io.execute { positions.save(book.id, locator) }
                         }
-                        "boundary" -> if (screen == "reader") { if (JSONObject(payload).optBoolean("end")) finishedBook() else notice("You’re at the beginning of this book.") }
+                        "page" -> readAloud?.onPageShown()
+                        "boundary" -> if (screen == "reader") { readAloud?.onBoundary(JSONObject(payload).optBoolean("end")); if (JSONObject(payload).optBoolean("end")) finishedBook() else notice("You’re at the beginning of this book.") }
                         "notice" -> notice(JSONObject(payload).getString("message"))
-                        "error" -> { ready = true; dismissLoading(); val message = JSONObject(payload).getString("message")
+                        "error" -> { ready = true; dismissLoading(); readAloud?.pause(); val message = JSONObject(payload).getString("message")
                             if (screen == "settings") pendingReaderError = message
                             else { notice(message); controls() } }
                     }
@@ -485,6 +492,7 @@ class MainActivity : Activity() {
         }
     }
     private fun closeReader() {
+        stopReadAloud()
         main.removeCallbacks(sleepTimer)
         pendingReaderError = null
         readerGeneration++
@@ -500,7 +508,12 @@ class MainActivity : Activity() {
         // Only the body scrolls, so a long list never pushes the title or the card's rounded edge off screen.
         // The body's own padding leaves room for focus shadows, which the scroller would otherwise clip.
         val panel = column().apply { setPadding(dp(12), dp(6), dp(12), dp(10)) }
-        val scroll = ScrollView(this).apply { isFillViewport = false; addView(panel) }
+        // The card draws children unclipped (for focus shadows), so the scroller clips itself;
+        // otherwise rows scrolled out of view paint over the title.
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false; addView(panel)
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
+        }
         val card = column().apply {
             setPadding(dp(18), dp(22), dp(18), dp(12)); background = shape(Palette.paper, dp(18).toFloat())
             addView(heading.apply { setPadding(dp(12), 0, dp(12), 0) }); space(8)
@@ -532,6 +545,8 @@ class MainActivity : Activity() {
         panel.addView(label(currentBook?.title.orEmpty(), 16f, Palette.muted)); panel.space(8)
         panel.addView(label(progressText(readerProgress), 17f, Palette.muted).apply { tag = "reader-progress" })
         panel.space(12)
+        panel.addView(action(if (readAloud == null) "▶   Read aloud" else "▶   Back to read-aloud") { startReadAloud(play = false) }, LinearLayout.LayoutParams(-1, -2))
+        panel.space(12)
         var pref = preferences.get()
         val isPdf = currentBook?.format == "pdf"
         val sizeLabel = label("Text size  ·  ${ReadingPreferences.sizes[pref.size]} px", 17f)
@@ -550,16 +565,19 @@ class MainActivity : Activity() {
         light = ChoiceButton(this, "Warm light", { !pref.dark }, restColor = Palette.paper) { theme(false) }
         dark = ChoiceButton(this, "Dark", { pref.dark }) { theme(true) }
         themes.addView(light); themes.space(10); themes.addView(dark); panel.addView(themes); panel.space(10)
-        if (!isPdf) panel.addView(action("Chapters   →") { chapterList() }, LinearLayout.LayoutParams(-1, -2))
-        else panel.addView(action("Go to page   →") { pageList() }, LinearLayout.LayoutParams(-1, -2))
-        panel.space(10)
-        panel.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(-1, -2))
+        // Navigation and settings share a line so the card fits a 1080p screen without scrolling.
+        val more = row()
+        more.addView(if (!isPdf) action("Chapters   →") { chapterList() } else action("Go to page   →") { pageList() }, LinearLayout.LayoutParams(0, -2, 1f))
+        more.space(10)
+        more.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(0, -2, 1f))
+        panel.addView(more, LinearLayout.LayoutParams(-1, -2))
         panel.space(10)
         val resume = action("Back to reading", true) { hideOverlay() }
         panel.addView(resume, LinearLayout.LayoutParams(-1, -2)); resume.requestFocus()
     }
     private fun leaveSettings() {
         settingsView?.let { root.removeView(it) }; settingsView = null
+        voiceSamples?.close(); voiceSamples = null
         if (settingsFromReader) {
             screen = "reader"; root.requestFocus()
             pendingReaderError?.let { pendingReaderError = null; notice(it); controls() }
@@ -568,6 +586,7 @@ class MainActivity : Activity() {
     internal fun settings() {
         settingsFromReader = screen == "reader"
         hideOverlay(); screen = "settings"
+        voiceSamples?.close(); voiceSamples = null
         if (!settingsFromReader) root.removeAllViews()
         // Keep the renderer measured and alive underneath the opaque settings page.
         val content = column().apply {
@@ -593,8 +612,10 @@ class MainActivity : Activity() {
         var pref = preferences.get()
         fun save(value: ReadingPreferences) {
             val renderChanged = value.size != pref.size || value.spread != pref.spread || value.dark != pref.dark
+            val previousRate = pref.speechRate
             pref = value; preferences.save(value)
             if (renderChanged) engine?.preferences(value)
+            if (value.speechRate != previousRate) readAloud?.setRate(value.speechRate / 100f)
             resetSleepTimer()
         }
         fun heading(text: String) { rows.addView(label(text, 19f, serif = true)); rows.space(5) }
@@ -615,6 +636,33 @@ class MainActivity : Activity() {
             val options = ReadingPreferences.sleepOptions
             save(pref.copy(sleepMinutes = options[(options.indexOf(pref.sleepMinutes) + it).coerceIn(0, options.lastIndex)]))
         }
+        heading("Read aloud")
+        option("Reading speed", "How fast the voice reads.",
+            { "${pref.speechRate / 100}.${"%02d".format(pref.speechRate % 100).trimEnd('0').ifEmpty { "0" }}×" }) {
+            val rates = ReadingPreferences.speechRates
+            save(pref.copy(speechRate = rates[(rates.indexOf(pref.speechRate) + it).coerceIn(0, rates.lastIndex)]))
+        }
+        // One row whatever the voice count: ← / → step through "TV default" and every installed offline voice.
+        val samples = VoiceSamples(this) { _ -> (rows.findViewWithTag<OptionRow>("voice-row"))?.refresh() }
+        voiceSamples = samples
+        fun voiceNames() = listOf("") + samples.voices.map { it.name }
+        option("Voice", "Voices installed on this TV, in every language. Each change plays a short sample. Add voices in the TV’s Settings → Text-to-speech.",
+            {
+                when {
+                    !samples.loaded -> "Loading voices…"
+                    pref.voice.isBlank() -> "TV default"
+                    else -> samples.voices.firstOrNull { it.name == pref.voice }?.label ?: "TV default"
+                }
+            }) { step ->
+            if (!samples.loaded) return@option
+            val names = voiceNames()
+            val current = names.indexOf(pref.voice).coerceAtLeast(0)
+            val next = names[(current + step).coerceIn(0, names.lastIndex)]
+            if (next != pref.voice) {
+                save(pref.copy(voice = next)); readAloud?.setVoice(next)
+            }
+            samples.play(next)
+        }.tag = "voice-row"
         heading("About")
         @Suppress("DEPRECATION")
         val version = packageManager.getPackageInfo(packageName, 0).versionName?.takeIf { it.isNotBlank() } ?: "Unknown"
@@ -683,9 +731,80 @@ class MainActivity : Activity() {
         val back = action("Back to library", true) { library() }; panel.addView(back)
         panel.addView(action("Read again") { hideOverlay(); engine?.chapter("") }); back.requestFocus()
     }
+    private val readAloudKeys = setOf(KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT,
+        KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+        KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP)
+    /**
+     * Enters read-aloud on the current page. The highlight appears first; the voice starts only with
+     * [play] or when the reader presses OK, so they can move to another sentence before it speaks.
+     */
+    private fun startReadAloud(play: Boolean) {
+        val renderer = engine ?: return
+        if (!ready) return
+        if (overlay != null) hideOverlay()
+        val existing = readAloud
+        if (existing != null) { showReadAloudChip(); if (play) existing.play(); return }
+        val saved = preferences.get()
+        val aloud = ReadAloud(this, renderer, saved.speechRate / 100f, saved.voice,
+            onState = { if (readAloud != null) showReadAloudChip() }, onNotice = ::notice, onSpeaking = { resetSleepTimer() })
+        readAloud = aloud
+        showReadAloudChip()
+        aloud.begin(play)
+    }
+    private fun stopReadAloud() {
+        main.removeCallbacks(fadeChip)
+        readAloudChip?.let { root.removeView(it) }; readAloudChip = null
+        readAloud?.close(); readAloud = null
+    }
+    /** A small pill along the bottom edge naming the state and the keys; it fades while the voice reads. */
+    private fun showReadAloudChip() {
+        val state = readAloud?.state ?: return
+        val chip = readAloudChip ?: label("", 16f, Color.WHITE).apply {
+            setPadding(dp(22), dp(11), dp(22), dp(11))
+            background = shape(Color.argb(232, 32, 40, 34), dp(24).toFloat())
+            isFocusable = false; tag = "read-aloud"
+            root.addView(this, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                .apply { bottomMargin = (resources.displayMetrics.heightPixels * .045).toInt() })
+            readAloudChip = this
+        }
+        chip.text = when (state) {
+            ReadAloud.State.PREPARING -> "Read aloud   ·   Getting the voice ready…"
+            ReadAloud.State.PAUSED -> "❚❚  Paused        ↑ ↓  Choose sentence        OK  Read from here        Back  Stop"
+            ReadAloud.State.PLAYING -> "▶  Reading aloud        ↑ ↓  Sentence        ← →  Page        OK  Pause        Back  Stop"
+        }
+        chip.contentDescription = chip.text
+        chip.animate().cancel(); chip.alpha = 1f
+        main.removeCallbacks(fadeChip)
+        main.postDelayed(fadeChip, if (state == ReadAloud.State.PLAYING) 3_000L else 8_000L)
+    }
     private fun notice(message: String) { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) resetSleepTimer()
+        if (screen == "reader" && overlay == null && ready) {
+            val aloud = readAloud
+            if (aloud != null && event.keyCode in readAloudKeys) {
+                if (event.action == KeyEvent.ACTION_DOWN) {
+                    showReadAloudChip()
+                    // Up/Down may be held to run through sentences; everything else ignores repeats.
+                    when (event.keyCode) {
+                        KeyEvent.KEYCODE_DPAD_UP -> aloud.move(-1)
+                        KeyEvent.KEYCODE_DPAD_DOWN -> aloud.move(1)
+                        else -> if (event.repeatCount == 0) when (event.keyCode) {
+                            KeyEvent.KEYCODE_DPAD_LEFT -> engine?.turn(false)
+                            KeyEvent.KEYCODE_DPAD_RIGHT -> engine?.turn(true)
+                            KeyEvent.KEYCODE_MEDIA_PLAY -> aloud.play()
+                            KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> aloud.pause()
+                            else -> aloud.toggle()
+                        }
+                    }
+                }
+                return true
+            }
+            if (aloud == null && (event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE || event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY)) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) startReadAloud(play = true)
+                return true
+            }
+        }
         if (screen == "reader" && overlay == null) {
             if (event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER)) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && ready) when (event.keyCode) {
@@ -704,17 +823,21 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         if (screen == "settings") { leaveSettings(); return }
         if (overlay != null) { hideOverlay(); return }
+        if (screen == "reader" && readAloud != null) { stopReadAloud(); return }
         if (screen == "reader" || screen == "import") { library(); return }
         super.onBackPressed()
     }
     override fun onStop() {
         super.onStop()
+        readAloud?.pause()
+        voiceSamples?.stopPlayback()
         main.removeCallbacks(sleepTimer)
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (screen == "import") { stopPairing(); screen = "import-paused" }
     }
     override fun onStart() { super.onStart(); if (::preferences.isInitialized) resetSleepTimer(); if (::root.isInitialized && screen == "import-paused") showImport() }
     override fun onDestroy() {
+        voiceSamples?.close(); voiceSamples = null
         stopPairing(); closeReader(); indexQueue.clear(); indexEngine?.close(); indexEngine = null; io.shutdown()
         super.onDestroy()
     }

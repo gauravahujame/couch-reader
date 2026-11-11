@@ -40,8 +40,14 @@ data class Locator(val cfi: String = "", val href: String = "", val version: Int
     }
 }
 data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false,
-                              val spread: Boolean = false, val sleepMinutes: Int = 30) {
-    companion object { val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0) }
+                              val spread: Boolean = false, val sleepMinutes: Int = 30, val speechRate: Int = 100,
+                              /** Text-to-speech voice name; empty means the TV's default voice. */
+                              val voice: String = "") {
+    companion object {
+        val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0)
+        /** Read-aloud speed in percent of the voice's normal rate. */
+        val speechRates = listOf(75, 90, 100, 115, 130, 150, 175, 200)
+    }
 }
 class LibraryDatabase(context: Context) : SQLiteOpenHelper(context, "library.db", null, 4) {
     override fun onCreate(db: SQLiteDatabase) {
@@ -184,7 +190,10 @@ class ProgressRepository(private val db: LibraryDatabase) {
 class PreferencesRepository(context: Context) {
     private val storage = context.getSharedPreferences("reading", Context.MODE_PRIVATE)
     fun get() = ReadingPreferences(storage.getInt("size", 2).coerceIn(0, 5), storage.getBoolean("dark", false),
-        storage.getBoolean("spread", false), storage.getInt("sleepMinutes", 30).takeIf { it in ReadingPreferences.sleepOptions } ?: 30)
+        storage.getBoolean("spread", false), storage.getInt("sleepMinutes", 30).takeIf { it in ReadingPreferences.sleepOptions } ?: 30,
+        storage.getInt("speechRate", 100).takeIf { it in ReadingPreferences.speechRates } ?: 100,
+        storage.getString("voice", "").orEmpty().take(200))
     fun save(value: ReadingPreferences) { storage.edit().putInt("version", 2).putInt("size", value.size).putBoolean("dark", value.dark)
-        .putBoolean("spread", value.spread).putInt("sleepMinutes", value.sleepMinutes).apply() }
+        .putBoolean("spread", value.spread).putInt("sleepMinutes", value.sleepMinutes)
+        .putInt("speechRate", value.speechRate).putString("voice", value.voice).apply() }
 }
