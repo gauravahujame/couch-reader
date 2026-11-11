@@ -84,17 +84,22 @@ class MainActivity : Activity() {
         db = LibraryDatabase(this); books = BookRepository(this, db)
         positions = PositionRepository(db); progress = ProgressRepository(db); preferences = PreferencesRepository(this)
         root = FrameLayout(this); setContentView(root)
-        loading("Preparing your library…")
+        loading("Couch Reader", "Preparing your library")
         io.execute {
             books.reconcile()
             main.post { if (!isDestroyed) library() }
         }
     }
-    private fun loading(message: String) {
+    /** Replaces the screen with a [LoadingScreen]; tagged "loading" so reader events can dismiss it. */
+    private fun loading(eyebrow: String, message: String, hero: View? = null, detail: String? = null): LoadingScreen {
         root.removeAllViews()
         root.setBackgroundColor(Palette.paper)
-        root.addView(label(message, 24f, serif = true), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        return LoadingScreen(this, eyebrow, message, hero, detail).also {
+            it.tag = "loading"
+            root.addView(it, FrameLayout.LayoutParams(-1, -1))
+        }
     }
+    private fun dismissLoading() { (root.findViewWithTag<View>("loading") as? LoadingScreen)?.dismiss() }
     private fun page(): LinearLayout {
         root.removeAllViews(); root.setBackgroundColor(Palette.paper)
         return column().apply {
@@ -245,6 +250,11 @@ class MainActivity : Activity() {
         val percent = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" } ?: if (currentBook?.id in failedIndexes) "Progress unavailable" else "Calculating progress…"
         return if (value.chapter.isBlank()) percent else "${value.chapter} · $percent"
     }
+    /** The opening screen's line for a returning reader: where they left off and how far in they are. */
+    private fun openingDetail(value: ReadingProgress): String {
+        val percent = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" }
+        return listOfNotNull(value.chapter.takeIf { it.isNotBlank() }, percent).joinToString("  ·  ").ifEmpty { "Picking up where you left off" }
+    }
     /** Renders a card's progress as one line: the bar, then the percentage (or a short status) to its right. */
     private fun fillProgress(parent: LinearLayout, value: ReadingProgress, pendingMessage: String = "Calculating…") {
         parent.removeAllViews()
@@ -320,7 +330,7 @@ class MainActivity : Activity() {
         activeDialog = AlertDialog.Builder(this).setTitle("Remove from device?")
             .setMessage("${book.title} and its saved reading position will be removed. You can import the book again later.")
             .setNegativeButton("Keep book", null).setPositiveButton("Remove") { _, _ ->
-                loading("Removing book…")
+                loading("Tidying the shelf", "Removing ${book.title}")
                 io.execute { books.remove(book); main.post { library() } }
             }.create().also { it.show(); it.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus() }
     }
@@ -403,17 +413,27 @@ class MainActivity : Activity() {
         stopPairing(); closeReader(); screen = "reader"; currentBook = book; selectedBook = book.id
         val generation = readerGeneration
         ready = false; chapters = emptyList(); readerProgress = ReadingProgress(null, "Loading chapter…")
-        loading("Opening ${book.title}…")
+        // The opening screen shows the same cover as the library card, so the book appears to lift off the shelf.
+        val cover = BookCover(this, book.title, book.author, book.format, CoverTones.forKey(book.id), titleSize = 20f).apply {
+            elevation = dp(14).toFloat(); title.maxLines = 4
+        }
+        val returning = book.opened > 0
+        val opening = loading(if (returning) "Welcome back" else "Now opening", book.title,
+            hero = FrameLayout(this).apply { clipChildren = false; addView(cover, FrameLayout.LayoutParams(dp(150), dp(214))) },
+            detail = "by ${book.author}")
+        val live = liveProgress[book.id]
         io.execute {
             val position = positions.get(book.id)
             val unavailablePosition = position == null && positions.hasSavedPosition(book.id)
+            val saved = if (returning) live ?: progress.all()[book.id] else null
             books.opened(book)
             main.post {
                 if (screen != "reader" || currentBook?.id != book.id || generation != readerGeneration || isDestroyed) return@post
+                saved?.let { opening.setDetail(openingDetail(it)) }
                 val eventHandler: (String, String) -> Unit = event@ { type, payload ->
                     if ((screen != "reader" && !(screen == "settings" && settingsFromReader)) || currentBook?.id != book.id || generation != readerGeneration) return@event
                     when (type) {
-                        "ready" -> { if (book.format == "epub" && !JSONObject(payload).optBoolean("indexed")) queueIndex(book); ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
+                        "ready" -> { if (book.format == "epub" && !JSONObject(payload).optBoolean("indexed")) queueIndex(book); ready = true; dismissLoading(); if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
                         "chapters" -> { val list = JSONArray(payload); chapters = (0 until list.length()).map { list.getJSONObject(it).let { item -> item.getString("title") to item.getString("href") } } }
                         "readingInfo" -> {
                             val data = JSONObject(payload)
@@ -431,7 +451,7 @@ class MainActivity : Activity() {
                         }
                         "boundary" -> if (screen == "reader") { if (JSONObject(payload).optBoolean("end")) finishedBook() else notice("You’re at the beginning of this book.") }
                         "notice" -> notice(JSONObject(payload).getString("message"))
-                        "error" -> { ready = true; root.findViewWithTag<View>("loading")?.let { root.removeView(it) }; val message = JSONObject(payload).getString("message")
+                        "error" -> { ready = true; dismissLoading(); val message = JSONObject(payload).getString("message")
                             if (screen == "settings") pendingReaderError = message
                             else { notice(message); controls() } }
                     }
@@ -440,8 +460,10 @@ class MainActivity : Activity() {
                     PdfReaderEngine(this, books, book, position, preferences.get(), eventHandler)
                 else EpubReaderEngine(this, books, book, position, preferences.get(), onEvent = eventHandler)
                 engine = renderer
-                root.removeAllViews(); root.addView(renderer.view, FrameLayout.LayoutParams(-1, -1))
-                root.addView(label("Opening book…", 22f).apply { tag = "loading"; setBackgroundColor(Palette.paper); setPadding(dp(20), dp(20), dp(20), dp(20)) }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+                // The renderer prepares underneath the opening screen, which stays put and keeps animating.
+                for (i in root.childCount - 1 downTo 0) if (root.getChildAt(i) !== opening) root.removeViewAt(i)
+                root.addView(renderer.view, 0, FrameLayout.LayoutParams(-1, -1))
+                if (opening.parent == null) root.addView(opening, FrameLayout.LayoutParams(-1, -1))
                 root.isFocusableInTouchMode = true; root.requestFocus()
                 resetSleepTimer()
             }
