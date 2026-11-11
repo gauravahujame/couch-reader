@@ -1,7 +1,6 @@
 package dev.couchreader
 
 import android.app.Activity
-import android.app.AlertDialog
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Bundle
@@ -10,6 +9,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -68,7 +68,9 @@ class MainActivity : Activity() {
         val minutes = preferences.get().sleepMinutes
         if (minutes > 0) main.postDelayed(sleepTimer, minutes * 60_000L)
     }
-    private var activeDialog: AlertDialog? = null
+    // Pages under the open overlay, with the focusability to restore when it closes.
+    private var overlayBlocked: List<Pair<ViewGroup, Int>> = emptyList()
+    private var overlayReturnFocus: View? = null
     private val timer = object : Runnable {
         override fun run() {
             val upload = server ?: return
@@ -322,17 +324,26 @@ class MainActivity : Activity() {
         }
     }
     private fun bookActions(book: Book) {
-        activeDialog = AlertDialog.Builder(this).setTitle(book.title).setItems(arrayOf("Read", "Remove from device")) { _, which ->
-            if (which == 0) open(book) else confirmRemove(book)
-        }.setNegativeButton("Back", null).create().also { it.show() }
+        overlayReturnFocus = currentFocus
+        val panel = overlayPanel(book.title)
+        panel.addView(label(book.author, 17f, Palette.muted)); panel.space(16)
+        val read = action(if (book.opened > 0) "Continue reading" else "Start reading", true) { open(book) }
+        panel.addView(read, LinearLayout.LayoutParams(-1, -2)); panel.space(8)
+        panel.addView(action("Remove from device") { confirmRemove(book) }, LinearLayout.LayoutParams(-1, -2)); panel.space(8)
+        panel.addView(action("Back to library") { hideOverlay() }, LinearLayout.LayoutParams(-1, -2))
+        read.requestFocus()
     }
     private fun confirmRemove(book: Book) {
-        activeDialog = AlertDialog.Builder(this).setTitle("Remove from device?")
-            .setMessage("${book.title} and its saved reading position will be removed. You can import the book again later.")
-            .setNegativeButton("Keep book", null).setPositiveButton("Remove") { _, _ ->
-                loading("Tidying the shelf", "Removing ${book.title}")
-                io.execute { books.remove(book); main.post { library() } }
-            }.create().also { it.show(); it.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus() }
+        val panel = overlayPanel("Remove from device?")
+        panel.addView(label("${book.title} and its saved reading position will be removed. You can import the book again later.", 18f, Palette.muted)); panel.space(16)
+        val buttons = row()
+        val keep = action("Keep book", true) { hideOverlay() }
+        buttons.addView(keep); buttons.space(10)
+        buttons.addView(action("Remove") {
+            loading("Tidying the shelf", "Removing ${book.title}")
+            io.execute { books.remove(book); main.post { library() } }
+        })
+        panel.addView(buttons); keep.requestFocus()
     }
     private fun showImport() {
         closeReader(); stopPairing(); screen = "import"
@@ -473,22 +484,33 @@ class MainActivity : Activity() {
         main.removeCallbacks(sleepTimer)
         pendingReaderError = null
         readerGeneration++
-        overlay = null; currentBook = null
+        overlay = null; overlayBlocked = emptyList(); overlayReturnFocus = null; currentBook = null
         engine?.let { root.removeView(it.view); it.close() }; engine = null
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     private fun overlayPanel(title: String): LinearLayout {
         overlay?.let { root.removeView(it) }
         val scrim = FrameLayout(this).apply { setBackgroundColor(0xb3202822.toInt()); isFocusable = false }
-        val panel = column().apply { setPadding(dp(30), dp(22), dp(30), dp(22)); background = shape(Palette.paper); addView(label(title, 29f, serif = true)); space(14) }
+        val panel = column().apply { setPadding(dp(30), dp(22), dp(30), dp(22)); background = shape(Palette.paper, dp(18).toFloat()); addView(label(title, 29f, serif = true)); space(14) }
         val scroll = ScrollView(this).apply { isFillViewport = false; addView(panel) }
         val margin = (resources.displayMetrics.heightPixels * .07).toInt()
         scrim.addView(scroll, FrameLayout.LayoutParams(dp(560).coerceAtMost((resources.displayMetrics.widthPixels * .86).toInt()), -2, Gravity.CENTER).apply { topMargin = margin; bottomMargin = margin })
+        // D-pad focus search ignores z-order, so block the page underneath or focus escapes the panel.
+        if (overlayBlocked.isEmpty()) overlayBlocked = (0 until root.childCount).map { root.getChildAt(it) }
+            .filterIsInstance<ViewGroup>().filter { it.descendantFocusability != ViewGroup.FOCUS_BLOCK_DESCENDANTS }
+            .map { it to it.descendantFocusability }
+            .onEach { (view, _) -> view.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS }
+        // The scrim fades in only when an overlay first opens; switching panels just lifts the new one in.
+        if (overlay == null) { scrim.alpha = 0f; scrim.animate().alpha(1f).setDuration(180).start() }
+        scroll.alpha = 0f; scroll.translationY = dp(14).toFloat()
+        scroll.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
         overlay = scrim; root.addView(scrim, FrameLayout.LayoutParams(-1, -1)); return panel
     }
     private fun hideOverlay() {
         overlay?.let { root.removeView(it) }; overlay = null
-        root.requestFocus()
+        overlayBlocked.forEach { (view, original) -> view.descendantFocusability = original }; overlayBlocked = emptyList()
+        val target = overlayReturnFocus; overlayReturnFocus = null
+        if (target?.isAttachedToWindow == true) target.requestFocus() else root.requestFocus()
     }
     private fun controls() {
         if (engine == null) return
@@ -611,7 +633,7 @@ class MainActivity : Activity() {
     private fun notice(message: String) { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) resetSleepTimer()
-        if (screen == "reader" && activeDialog?.isShowing != true && overlay == null) {
+        if (screen == "reader" && overlay == null) {
             if (event.keyCode in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER)) {
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 && ready) when (event.keyCode) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> engine?.turn(false)
