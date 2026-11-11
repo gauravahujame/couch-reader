@@ -8,7 +8,10 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** One short-lived pairing session. Raw single-file bodies avoid multipart memory amplification. */
+/**
+ * One short-lived pairing session. Raw single-file bodies avoid multipart memory amplification;
+ * the page sends several chosen files one request at a time.
+ */
 class UploadServer(private val books: BookRepository, private val importer: ImportBook,
                    private val now: () -> Long = { android.os.SystemClock.elapsedRealtime() },
                    private val onState: (String, ImportResult?) -> Unit) : NanoHTTPD(0) {
@@ -43,7 +46,7 @@ class UploadServer(private val books: BookRepository, private val importer: Impo
         if (origin != null && origin != "http://${session.headers["host"]}") return response(Response.Status.FORBIDDEN, "Use the paired upload page.")
         val length = session.headers["content-length"]?.toLongOrNull()
             ?: return response(Response.Status.LENGTH_REQUIRED, "Transfer needs a known file size. Try another browser.")
-        if (length <= 0 || length > EpubValidator.MAX_COMPRESSED) return response(Response.Status.PAYLOAD_TOO_LARGE, "Choose one EPUB or PDF smaller than 50 MiB.")
+        if (length <= 0 || length > EpubValidator.MAX_COMPRESSED) return response(Response.Status.PAYLOAD_TOO_LARGE, "Each EPUB or PDF must be smaller than 50 MiB.")
         if (session.headers["content-type"]?.substringBefore(';') !in setOf("application/epub+zip", "application/pdf", "application/octet-stream"))
             return response(Response.Status.UNSUPPORTED_MEDIA_TYPE, "Choose an EPUB or PDF file.")
         if (!busy.compareAndSet(false, true)) return response(Response.Status.CONFLICT, "Another book is importing. Please wait.")
@@ -72,7 +75,7 @@ class UploadServer(private val books: BookRepository, private val importer: Impo
             val result = importer.execute(temp, name)
             val message = if (result.duplicate) "Already in library" else "Book added"
             onState(message, result)
-            return response(Response.Status.OK, "$message. You can now read it on your TV.")
+            return response(Response.Status.OK, "$message: ${BookMetadata.ellipsize(result.book.title, 120)}")
         } catch (e: Exception) {
             val message = if (e is ImportFailure) e.message!! else "Transfer interrupted or storage unavailable. Free space and try again."
             onState(message, null)
@@ -98,20 +101,43 @@ class UploadServer(private val books: BookRepository, private val importer: Impo
         private val PAGE = """
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Add a book · Couch Reader</title><style>
-:root{color-scheme:light;font-family:system-ui,sans-serif;color:#24372f;background:#f4f1e9}*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;padding:clamp(16px,4vw,40px);display:flex;justify-content:center;align-items:center;font-size:1rem;line-height:1.5}main{width:100%;max-width:32rem;min-width:0;padding-block:12px}.mark{font-size:.75rem;letter-spacing:.16em;font-weight:700}h1{font-family:Georgia,serif;font-weight:400;font-size:clamp(2rem,7vw,3rem);line-height:1.12;margin:clamp(24px,5vw,36px) 0 16px;text-wrap:balance}p{color:#53645a;overflow-wrap:anywhere}form{margin:24px 0;padding:clamp(16px,5vw,28px);border:1px solid #b8c3b9;border-radius:16px;background:#fffdf7;min-width:0}label{display:block;font-weight:650;margin-bottom:12px}input[type=file]{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:48px;font:inherit;font-size:.9375rem;overflow:hidden}input::file-selector-button{min-height:44px;max-width:100%;margin:0 12px 8px 0;padding:10px 12px;border:1px solid #b8c3b9;border-radius:6px;background:#f4f1e9;color:#24372f;font:inherit;cursor:pointer}button{display:block;width:100%;min-height:48px;margin-top:20px;border:0;border-radius:8px;padding:14px;background:#294d3b;color:#fff;font:inherit;font-weight:650;cursor:pointer;white-space:normal}button:disabled{opacity:.55}button:focus-visible,input:focus-visible{outline:3px solid #9b632c;outline-offset:4px}progress{display:block;width:100%;margin-top:18px;accent-color:#294d3b}progress[hidden]{display:none}small{display:block;font-size:.8125rem;line-height:1.5;color:#53645a;overflow-wrap:anywhere}#status{min-height:3em;margin:16px 0}#file-help{margin-top:8px}@media(max-width:360px){body{padding:16px}form{padding:16px}h1{font-size:2rem}}@media(max-height:650px){body{align-items:flex-start}}
+:root{color-scheme:light;font-family:system-ui,sans-serif;color:#24372f;background:#f4f1e9}*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;padding:clamp(16px,4vw,40px);display:flex;justify-content:center;align-items:center;font-size:1rem;line-height:1.5}main{width:100%;max-width:32rem;min-width:0;padding-block:12px}.mark{font-size:.75rem;letter-spacing:.16em;font-weight:700}h1{font-family:Georgia,serif;font-weight:400;font-size:clamp(2rem,7vw,3rem);line-height:1.12;margin:clamp(24px,5vw,36px) 0 16px;text-wrap:balance}p{color:#53645a;overflow-wrap:anywhere}form{margin:24px 0;padding:clamp(16px,5vw,28px);border:1px solid #b8c3b9;border-radius:16px;background:#fffdf7;min-width:0}label{display:block;font-weight:650;margin-bottom:12px}input[type=file]{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:48px;font:inherit;font-size:.9375rem;overflow:hidden}input::file-selector-button{min-height:44px;max-width:100%;margin:0 12px 8px 0;padding:10px 12px;border:1px solid #b8c3b9;border-radius:6px;background:#f4f1e9;color:#24372f;font:inherit;cursor:pointer}button{display:block;width:100%;min-height:48px;margin-top:20px;border:0;border-radius:8px;padding:14px;background:#294d3b;color:#fff;font:inherit;font-weight:650;cursor:pointer;white-space:normal}button:disabled{opacity:.55}button:focus-visible,input:focus-visible{outline:3px solid #9b632c;outline-offset:4px}progress{display:block;width:100%;margin-top:18px;accent-color:#294d3b}progress[hidden]{display:none}small{display:block;font-size:.8125rem;line-height:1.5;color:#53645a;overflow-wrap:anywhere}#status{min-height:3em;margin:16px 0}#status.done{padding:12px 14px;border-radius:10px;background:#e2e7d6;color:#294d3b;font-weight:650}#status.failed{padding:12px 14px;border-radius:10px;background:#f6e3d6;color:#7a3b12;font-weight:650}#results{list-style:none;margin:0 0 16px;padding:0}#results li{padding:6px 0;border-top:1px solid #dcd9cc;overflow-wrap:anywhere}#results li.ok::before{content:"✓  ";color:#294d3b;font-weight:700}#results li.bad::before{content:"✕  ";color:#9b3b12;font-weight:700}#results li.wait{color:#53645a}#file-help{margin-top:8px}@media(max-width:360px){body{padding:16px}form{padding:16px}h1{font-size:2rem}}@media(max-height:650px){body{align-items:flex-start}}
 </style>
-<main><div class="mark">COUCH READER</div><h1>Your next chapter, on the big screen.</h1><p>Choose a book from this device. It goes straight to your TV, over your home network.</p>
-<form id="upload" action="/upload" method="post"><label for="file">Choose an EPUB or PDF</label><input id="file" name="file" type="file" accept=".epub,.pdf,application/epub+zip,application/pdf" aria-describedby="file-help" required><small id="file-help">DRM-free EPUB or unlocked PDF · up to 50 MiB</small><button id="send" type="submit">Send to TV</button><progress id="progress" hidden aria-label="Upload progress" max="100"></progress></form>
-<p id="status" role="status" aria-live="polite"></p><small>Keep Add book open on your TV. The TV code refreshes automatically every 10 minutes. If pairing expires, scan the new code. Your book stays on your TV; no cloud or account.</small></main>
+<main><div class="mark">COUCH READER</div><h1>Your next chapter, on the big screen.</h1><p>Choose books from this device. They go straight to your TV, over your home network.</p>
+<form id="upload" action="/upload" method="post"><label for="file">Choose EPUBs or PDFs</label><input id="file" name="file" type="file" multiple accept=".epub,.pdf,application/epub+zip,application/pdf" aria-describedby="file-help" required><small id="file-help">DRM-free EPUB or unlocked PDF · up to 50 MiB each · pick several at once</small><button id="send" type="submit">Send to TV</button><progress id="progress" hidden aria-label="Upload progress" max="100"></progress></form>
+<p id="status" role="status" aria-live="polite"></p><ul id="results" aria-label="Books sent"></ul><small>Keep Add book open on your TV. The TV code refreshes automatically every 10 minutes. If pairing expires, scan the new code. Your book stays on your TV; no cloud or account.</small></main>
 <script>
 const form=document.getElementById('upload'),file=document.getElementById('file'),button=document.getElementById('send'),status=document.getElementById('status'),progress=document.getElementById('progress');
-form.addEventListener('submit',event=>{event.preventDefault();const book=file.files[0];if(!book)return;const name=book.name.toLowerCase(),isPdf=name.endsWith('.pdf')||book.type==='application/pdf',isEpub=name.endsWith('.epub')||book.type==='application/epub+zip';if((!isEpub&&!isPdf)||book.size>52428800||!book.size){status.textContent='Choose a non-empty EPUB or PDF smaller than 50 MiB.';return;}
-button.disabled=true;progress.hidden=false;progress.removeAttribute('value');status.textContent='Sending your book… Keep this page open.';
-const url=new URL('/upload',location.href);url.searchParams.set('token',new URL(location.href).searchParams.get('token'));url.searchParams.set('name',book.name);
-const request=new XMLHttpRequest();request.open('POST',url);request.timeout=180000;request.setRequestHeader('Content-Type',isPdf?'application/pdf':'application/epub+zip');
-request.upload.onprogress=e=>{if(e.lengthComputable){progress.value=e.loaded/e.total*100;if(e.loaded===e.total)status.textContent='Checking your book on your TV…';}};
-request.onload=()=>{status.textContent=request.responseText||'Transfer failed. Please try again.';button.disabled=false;progress.hidden=true;};
-request.onerror=request.ontimeout=()=>{status.textContent='Cannot reach your TV. Keep Add book open, check both devices use the same Wi-Fi, and try again. Guest networks may block connections.';button.disabled=false;progress.hidden=true;};request.send(book);});
+const results=document.getElementById('results'),offline='Cannot reach your TV. Keep Add book open, check both devices use the same Wi-Fi, and try again. Guest networks may block connections.';
+const plural=n=>n===1?'1 book':n+' books';
+file.addEventListener('change',()=>{const n=file.files.length;button.textContent=n>1?'Send '+plural(n)+' to TV':'Send to TV';});
+function kind(book){const name=book.name.toLowerCase();if(name.endsWith('.pdf')||book.type==='application/pdf')return'application/pdf';if(name.endsWith('.epub')||book.type==='application/epub+zip')return'application/epub+zip';return null;}
+function line(text,css){const item=document.createElement('li');item.textContent=text;item.className=css;results.appendChild(item);return item;}
+// The TV imports one book at a time, so files go one after another. Resolves {ok, message, stop}.
+function send(book,type,onProgress){return new Promise(resolve=>{
+ const url=new URL('/upload',location.href);url.searchParams.set('token',new URL(location.href).searchParams.get('token'));url.searchParams.set('name',book.name);
+ const request=new XMLHttpRequest();request.open('POST',url);request.timeout=180000;request.setRequestHeader('Content-Type',type);
+ request.upload.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded/e.total);};
+ request.onload=()=>resolve({ok:request.status===200,message:request.responseText||'Transfer failed. Please try again.',stop:request.status===403});
+ request.onerror=request.ontimeout=()=>resolve({ok:false,message:offline,stop:true});
+ request.send(book);});}
+form.addEventListener('submit',async event=>{event.preventDefault();const books=Array.from(file.files);if(!books.length)return;
+ button.disabled=true;file.disabled=true;results.textContent='';status.className='';progress.hidden=false;
+ let sent=0,failed=0;
+ for(let i=0;i<books.length;i++){
+  const book=books[i],type=kind(book),label=books.length>1?'('+(i+1)+' of '+books.length+') ':'';
+  if(!type||book.size>52428800||!book.size){line(book.name+' — not a non-empty EPUB or PDF under 50 MiB','bad');failed++;continue;}
+  const item=line(book.name+' — sending…','wait');progress.removeAttribute('value');
+  status.textContent='Sending '+label+book.name+'… Keep this page open.';
+  const result=await send(book,type,fraction=>{progress.value=fraction*100;if(fraction>=1){status.textContent='Checking '+label+book.name+' on your TV…';item.textContent=book.name+' — checking on your TV…';}});
+  item.textContent=result.ok?result.message:book.name+' — '+result.message;item.className=result.ok?'ok':'bad';
+  if(result.ok)sent++;else failed++;
+  if(result.stop){for(let j=i+1;j<books.length;j++){line(books[j].name+' — not sent','bad');failed++;}break;}
+ }
+ progress.hidden=true;button.disabled=false;file.disabled=false;form.reset();button.textContent='Send to TV';
+ if(!failed){status.className='done';status.textContent=(books.length===1?'Done! Your book is on your TV.':'Done! '+plural(sent)+' sent to your TV.')+' Choose more to keep going.';}
+ else{status.className='failed';status.textContent=sent?plural(sent)+' sent, '+failed+' not sent. See the list below.':'Nothing was sent. See the list below.';}
+});
 </script></html>
 """.trimIndent()
     }

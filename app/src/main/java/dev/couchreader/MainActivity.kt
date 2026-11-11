@@ -365,13 +365,48 @@ class MainActivity : Activity() {
         val body = row()
         val instructions = column()
         instructions.addView(label("A new story\nis a scan away.", 40f, serif = true)); instructions.space(16)
-        instructions.addView(label("1   Connect your phone or computer to the same Wi-Fi.\n2   Scan the code or open the address in a browser.\n3   Choose one EPUB or unlocked PDF, up to 50 MiB.", 18f, Palette.muted))
+        val steps = label("1   Connect your phone or computer to the same Wi-Fi.\n2   Scan the code or open the address in a browser.\n3   Choose one or more EPUBs or unlocked PDFs, up to 50 MiB each.", 18f, Palette.muted)
+        instructions.addView(steps)
         instructions.space(16)
         val status = label("Finding your local network…", 17f)
         instructions.addView(status)
+        // Books received while this screen is open, newest first, so each upload visibly lands on the TV.
+        val received = column().apply {
+            visibility = View.GONE
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = shape(Palette.greenTint, border = Palette.green, stroke = dp(2))
+        }
+        instructions.space(14); instructions.addView(received, LinearLayout.LayoutParams(-1, -2))
+        val arrivals = mutableListOf<ImportResult>()
+        fun showArrivals() {
+            // The steps and status line make room for the card, so it and its buttons fit without scrolling.
+            // Progress and errors for later uploads still show in the status line above it.
+            steps.visibility = View.GONE; status.visibility = View.GONE
+            received.removeAllViews(); received.visibility = View.VISIBLE
+            val added = arrivals.count { !it.duplicate }
+            val heading = when {
+                added == 0 -> "Already on your TV"
+                added == 1 -> "✓  1 book added"
+                else -> "✓  $added books added"
+            }
+            received.addView(label(heading, 22f, Palette.green, serif = true)); received.space(6)
+            arrivals.asReversed().take(2).forEach { result ->
+                val line = (if (result.duplicate) "Already in library  ·  " else "") + BookMetadata.ellipsize(result.book.title, 70)
+                received.addView(label(line, 16f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+            }
+            if (arrivals.size > 2) received.addView(label("and ${arrivals.size - 2} more", 15f, Palette.muted))
+            received.addView(label("Send more from your phone any time.", 15f, Palette.muted).apply { setPadding(0, dp(6), 0, 0) })
+        }
         val actions = row(); instructions.space(14); instructions.addView(actions)
-        val instructionScroll = ScrollView(this).apply { addView(instructions) }
-        body.addView(instructionScroll, LinearLayout.LayoutParams(0, -1, 1f)); body.space(30)
+        // The page column draws children unclipped (for focus shadows), so the scroller clips itself;
+        // otherwise scrolled text paints over the masthead. Bottom padding keeps the focus shadow inside.
+        instructions.setPadding(dp(10), 0, 0, dp(10))
+        val instructionScroll = ScrollView(this).apply {
+            addView(instructions)
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
+        }
+        // The negative margin cancels the shadow padding, so the text still lines up with the masthead.
+        body.addView(instructionScroll, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = -dp(10) }); body.space(30)
         val codePanel = column().apply { gravity = Gravity.CENTER; setPadding(dp(20), dp(20), dp(20), dp(20)); background = shape(Palette.white) }
         val qr = SquareQrView(this).apply { contentDescription = "Scan to add a book from your phone" }
         codePanel.addView(qr, LinearLayout.LayoutParams(dp(184), dp(184)))
@@ -393,8 +428,10 @@ class MainActivity : Activity() {
         try {
             val upload = UploadServer(books, ImportBook(books)) { message, result -> main.post {
                 if (screen != "import" || pairingGeneration != generation) return@post
-                status.text = message
+                status.text = message; status.visibility = View.VISIBLE
                 if (result != null) {
+                    arrivals += result; showArrivals()
+                    notice(if (result.duplicate) "Already in your library" else "Added “${BookMetadata.ellipsize(result.book.title, 60)}”")
                     actions.removeAllViews()
                     actions.addView(action("Read now", true) { open(result.book) })
                     actions.space(10); actions.addView(action("Back to library") { library() })
