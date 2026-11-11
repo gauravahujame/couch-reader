@@ -65,3 +65,7 @@ Settings tests use typed module-internal Activity members rather than private-na
 - Catalog schema 3 adds reading_progress (fraction and chapter only), with explicit upgrade from earlier schemas and foreign-key cascade. Existing positions/EPUB CFI payloads remain untouched. Fraction is derived display data, not a viewport/page locator. Reflows use the pending original CFI anchor established in v0.3.1, preventing drift of displayed progress. About storage includes the location cache.
 
 Hidden index views dispatch bridge callbacks through an explicit main Handler; View.post would defer completion until window attachment. The TV regression test caught this before delivery.
+
+## PDF stays single-page — 11 November 2026
+
+The two-page spread setting stays EPUB-only by choice, not because of a platform limit. PdfRenderer opens one page at a time, but the single PDF worker could render two pages in turn and place them side by side within the existing 12M-pixel bitmap cap. The reason is readability at TV distance. A spread must fit each page to the screen height: a portrait A4 page at 1080px tall is about 764px wide, so its text is about 2.5× smaller than the current full-width page (up to 1920px) that Up/Down scrolls. At couch distance that is too small for ordinary book print. Revisit if image-heavy PDFs (comics, picture books, large-print scans) become a target, as an off-by-default PDF option that falls back to one page when two will not fit.
