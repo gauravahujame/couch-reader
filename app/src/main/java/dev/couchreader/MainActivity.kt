@@ -497,10 +497,18 @@ class MainActivity : Activity() {
         val scrim = FrameLayout(this).apply { setBackgroundColor(0xb3202822.toInt()); isFocusable = false }
         // Book titles can run to 300 characters; three lines keep the actions in view.
         val heading = label(title, 29f, serif = true).apply { maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END }
-        val panel = column().apply { setPadding(dp(30), dp(22), dp(30), dp(22)); background = shape(Palette.paper, dp(18).toFloat()); addView(heading); space(14) }
+        // Only the body scrolls, so a long list never pushes the title or the card's rounded edge off screen.
+        // The body's own padding leaves room for focus shadows, which the scroller would otherwise clip.
+        val panel = column().apply { setPadding(dp(12), dp(6), dp(12), dp(10)) }
         val scroll = ScrollView(this).apply { isFillViewport = false; addView(panel) }
+        val card = column().apply {
+            setPadding(dp(18), dp(22), dp(18), dp(12)); background = shape(Palette.paper, dp(18).toFloat())
+            addView(heading.apply { setPadding(dp(12), 0, dp(12), 0) }); space(8)
+            // Weight under a height-capped parent shrinks the scroller to the space left once the card hits the cap.
+            addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        }
         val margin = (resources.displayMetrics.heightPixels * .07).toInt()
-        scrim.addView(scroll, FrameLayout.LayoutParams(dp(560).coerceAtMost((resources.displayMetrics.widthPixels * .86).toInt()), -2, Gravity.CENTER).apply { topMargin = margin; bottomMargin = margin })
+        scrim.addView(card, FrameLayout.LayoutParams(dp(560).coerceAtMost((resources.displayMetrics.widthPixels * .86).toInt()), -2, Gravity.CENTER).apply { topMargin = margin; bottomMargin = margin })
         // D-pad focus search ignores z-order, so block the page underneath or focus escapes the panel.
         if (overlayBlocked.isEmpty()) overlayBlocked = (0 until root.childCount).map { root.getChildAt(it) }
             .filterIsInstance<ViewGroup>().filter { it.descendantFocusability != ViewGroup.FOCUS_BLOCK_DESCENDANTS }
@@ -508,8 +516,8 @@ class MainActivity : Activity() {
             .onEach { (view, _) -> view.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS }
         // The scrim fades in only when an overlay first opens; switching panels just lifts the new one in.
         if (overlay == null) { scrim.alpha = 0f; scrim.animate().alpha(1f).setDuration(180).start() }
-        scroll.alpha = 0f; scroll.translationY = dp(14).toFloat()
-        scroll.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        card.alpha = 0f; card.translationY = dp(14).toFloat()
+        card.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
         overlay = scrim; root.addView(scrim, FrameLayout.LayoutParams(-1, -1)); return panel
     }
     private fun hideOverlay() {
@@ -538,11 +546,13 @@ class MainActivity : Activity() {
         val themes = row()
         lateinit var light: ChoiceButton; lateinit var dark: ChoiceButton
         fun theme(isDark: Boolean) { update(pref.copy(dark = isDark)); light.refresh(); dark.refresh() }
-        light = ChoiceButton(this, "Warm light", { !pref.dark }) { theme(false) }
+        // Warm light rests in the page colour it names (Palette.paper, the reader's light background), not button white.
+        light = ChoiceButton(this, "Warm light", { !pref.dark }, restColor = Palette.paper) { theme(false) }
         dark = ChoiceButton(this, "Dark", { pref.dark }) { theme(true) }
         themes.addView(light); themes.space(10); themes.addView(dark); panel.addView(themes); panel.space(10)
         if (!isPdf) panel.addView(action("Chapters   →") { chapterList() }, LinearLayout.LayoutParams(-1, -2))
         else panel.addView(action("Go to page   →") { pageList() }, LinearLayout.LayoutParams(-1, -2))
+        panel.space(10)
         panel.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(-1, -2))
         panel.space(10)
         val resume = action("Back to reading", true) { hideOverlay() }
@@ -636,53 +646,36 @@ class MainActivity : Activity() {
         if (chapters.isEmpty()) panel.addView(label("Chapter list is loading. Try again in a moment.", 17f))
         chapters.forEach { (title, href) -> panel.addView(action(title) { hideOverlay(); engine?.chapter(href) }, LinearLayout.LayoutParams(-1, -2)) }
         val back = action("Back to controls") { controls() }; panel.addView(back)
-        (if (chapters.isEmpty()) back else panel.getChildAt(2) ?: back).requestFocus()
+        (if (chapters.isEmpty()) back else panel.getChildAt(0) ?: back).requestFocus()
         panel.tag = "chapters"
     }
     /**
-     * PDF page picker. Ten pages per row, so Up/Down moves ten pages and Left/Right one. PDFs longer than
-     * 100 pages first show a row of 100-page blocks; picking a block redraws the grid with its pages.
+     * PDF page picker: one [PageDial] whatever the page count, with the keys it accepts spelled out
+     * underneath. OK opens the chosen page; Back closes the popup.
      */
-    private fun pageList(block: Int? = null) {
+    private fun pageList() {
         val pdf = engine as? PdfReaderEngine ?: return
-        val blockSize = 100
         val panel = overlayPanel("Go to page"); panel.tag = "pages"
-        val count = pdf.pageCount; val current = pdf.currentPage
-        val back = action("Back to controls") { controls() }
+        val count = pdf.pageCount; val current = pdf.currentPage + 1
         if (count == 0) {
             panel.addView(label("Pages are still loading. Try again in a moment.", 17f)); panel.space(16)
-            panel.addView(back); back.requestFocus(); return
+            val back = action("Back to controls") { controls() }; panel.addView(back); back.requestFocus(); return
         }
-        panel.addView(label("You’re on page ${current + 1} of $count.", 17f, Palette.muted)); panel.space(14)
-        fun grid(cells: List<View>, columns: Int) {
-            cells.chunked(columns).forEachIndexed { index, line ->
-                if (index > 0) panel.space(8)
-                val row = row()
-                for (column in 0 until columns) {
-                    if (column > 0) row.space(8)
-                    // Empty fillers keep a short last row aligned with the columns above it.
-                    row.addView(line.getOrNull(column) ?: View(this), LinearLayout.LayoutParams(0, -2, 1f))
-                }
-                panel.addView(row, LinearLayout.LayoutParams(-1, -2))
+        panel.addView(label("You’re on page $current of $count.", 17f, Palette.muted)); panel.space(14)
+        val dial = PageDial(this, count, current) { page -> hideOverlay(); engine?.chapter("page:${page - 1}") }
+        panel.addView(dial, LinearLayout.LayoutParams(-1, -2)); panel.space(14)
+        // Every key the dial accepts is written out, so nothing depends on discovering it.
+        fun keys(vararg pairs: Pair<String, String>) = row().apply {
+            pairs.forEachIndexed { index, (key, meaning) ->
+                if (index > 0) space(22)
+                addView(label(key, 16f).apply { typeface = android.graphics.Typeface.DEFAULT_BOLD }); space(8)
+                addView(label(meaning, 16f, Palette.muted))
             }
         }
-        fun compact(button: ChoiceButton, side: Int) = button.apply { minWidth = 0; minimumWidth = 0; setPadding(dp(side), dp(10), dp(side), dp(10)) }
-        val start = block ?: (current / blockSize * blockSize)
-        var focus: View? = null
-        if (count > blockSize) {
-            grid((0 until count step blockSize).map { first ->
-                compact(ChoiceButton(this, "${first + 1}–${minOf(first + blockSize, count)}", { first == start }) { pageList(first) }, 8)
-                    .also { if (block != null && first == start) focus = it }
-            }, 4)
-            panel.space(18)
-        }
-        val pages = (start until minOf(start + blockSize, count)).map { index ->
-            compact(ChoiceButton(this, "${index + 1}", { index == current }, mark = false) { hideOverlay(); engine?.chapter("page:$index") }, 0)
-                .also { if (focus == null && index == current) focus = it }
-        }
-        grid(pages, 10)
-        panel.space(16); panel.addView(back)
-        (focus ?: pages.firstOrNull() ?: back).requestFocus()
+        panel.addView(keys("← →" to "1 page", "↑ ↓" to "${dial.bigStep} pages", "OK" to "Open", "Back" to "Cancel"))
+        panel.space(8)
+        panel.addView(label("Hold an arrow to keep moving. Number keys type a page.", 16f, Palette.muted))
+        dial.requestFocus()
     }
     private fun finishedBook() {
         val panel = overlayPanel("The end. Take a moment.")

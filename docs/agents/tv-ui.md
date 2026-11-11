@@ -18,8 +18,10 @@ When a call site replaces the listener with `setOnFocusChangeListener` (the card
 
 ## Selected vs focused
 
-For a mutually exclusive choice (the reader theme), use `ChoiceButton`. Focus is green fill plus gold border, so a selected option must not also be a plain green fill, or two options look focused at once. The selected option uses `Palette.greenTint`, a 2dp green border and a ✓. After a change, call `refresh()` on every option in the group. Narrow cells (the PDF page grid) pass `mark = false` and also need `minWidth = 0; minimumWidth = 0`, because the platform `Button` style sets an 88dp minimum width, wider than a tenth of the 560dp overlay.
+For a mutually exclusive choice (the reader theme), use `ChoiceButton`. Focus is green fill plus gold border, so a selected option must not also be a plain green fill, or two options look focused at once. The selected option uses `Palette.greenTint`, a 2dp green border and a ✓. After a change, call `refresh()` on every option in the group. `restColor` sets the fill when the option is neither focused nor selected (Warm light uses the page colour).
 
 ## Popups
 
 Build popups with `overlayPanel()` in `MainActivity`, not `AlertDialog`. D-pad focus search ignores z-order, so `overlayPanel` blocks focus on the page underneath and `hideOverlay` restores each view's original `descendantFocusability`. To send focus back to the control that opened the popup, set `overlayReturnFocus` before calling `overlayPanel` (as `bookActions` does).
+
+`overlayPanel` returns the scrolling body, not the card: the title sits outside it, so `panel.getChildAt(0)` is the first thing you added. Never grow a popup with the size of the data (one button per page or item); a long list scrolls, and a numeric choice uses a single control such as `PageDial`.
