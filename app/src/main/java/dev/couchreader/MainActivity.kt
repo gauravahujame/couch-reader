@@ -148,50 +148,60 @@ class MainActivity : Activity() {
             (if (restoreSettingsFocus) settingsButton else add).requestFocus(); restoreSettingsFocus = false
             return
         }
+        // One compact header row: title and count on the left, "Continue reading" on the right.
+        // Keeping the shortcut out of its own full-width row leaves the vertical space to the cards.
         val heading = row()
-        heading.addView(label("Your library", 34f, serif = true), LinearLayout.LayoutParams(0, -2, 1f))
-        heading.addView(label("${catalog.size} ${if (catalog.size == 1) "book" else "books"} · On this device", 15f, Palette.muted))
-        content.addView(heading); content.space(10)
-        val recent = catalog.firstOrNull { it.opened > 0 }
+        val titleGroup = row().apply { gravity = Gravity.BOTTOM }
+        titleGroup.addView(label("Your library", 34f, serif = true)); titleGroup.space(14)
+        titleGroup.addView(label("${catalog.size} ${if (catalog.size == 1) "book" else "books"} · On this device", 15f, Palette.muted).apply { maxLines = 1 })
+        heading.addView(titleGroup, LinearLayout.LayoutParams(0, -2, 1f))
+        val recent = catalog.filter { it.opened > 0 }.maxByOrNull { it.opened }
         recent?.let { book ->
-            val continueButton = action("Continue reading   ·   ${book.title}   →") { open(book) }
-            content.addView(continueButton, LinearLayout.LayoutParams(-1, -2)); content.space(12)
+            heading.space(16)
+            heading.addView(action("▶   Continue  ·  ${book.title}") { open(book) }.apply {
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                maxWidth = (resources.displayMetrics.widthPixels * .38).toInt()
+                contentDescription = "Continue reading ${book.title}"
+            })
         }
+        content.addView(heading); content.space(14)
         // The parent column draws children unclipped (for focus shadows), so the scroller clips itself.
         val scroll = ScrollView(this).apply {
             isFillViewport = true; clipToPadding = false
             outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
         }
         val grid = column()
-        val cardWidth = ((resources.displayMetrics.widthPixels * .88 - dp(36)) / 3).toInt()
+        // Column count follows the usable width so cards keep a readable size on any TV density.
+        val gap = dp(14)
+        val usableWidth = resources.displayMetrics.widthPixels * .88 - dp(8)
+        val columns = (usableWidth / dp(250)).toInt().coerceIn(2, 5)
+        val cardWidth = ((usableWidth - gap * (columns - 1)) / columns).toInt()
+        val idealCover = (cardWidth * .62).toInt().coerceIn(dp(120), dp(190))
+        val covers = mutableListOf<View>()
+        val coverTitles = mutableListOf<TextView>()
         var restore: View? = null
-        catalog.chunked(3).forEachIndexed { rowIndex, group ->
+        var recentRead: View? = null
+        var firstRead: View? = null
+        catalog.chunked(columns).forEach { group ->
             val line = row().apply { gravity = Gravity.TOP }
             group.forEachIndexed { index, book ->
                 if (index > 0) line.space(14)
                 val card = column().apply {
-                    setPadding(dp(14), dp(14), dp(14), dp(12))
+                    setPadding(dp(14), dp(14), dp(14), dp(14))
                     background = shape(Palette.white, border = Palette.line, stroke = dp(1))
                 }
-                val tones = listOf(0xff365347.toInt(), 0xff74513d.toInt(), 0xff515d70.toInt(), 0xff6b6743.toInt())
-                val cover = column().apply {
-                    gravity = Gravity.CENTER
-                    setPadding(dp(16), dp(18), dp(16), dp(18))
-                    background = shape(tones[(rowIndex * 3 + index) % tones.size], 5f)
-                    addView(label("—  ${book.format.uppercase()}  —", 10f, 0xffe9dfc4.toInt()).apply { letterSpacing = .15f })
-                    space(12)
-                    addView(label(book.title, 22f, Color.WHITE, serif = true).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END })
-                    space(12)
-                    addView(label(book.author, 12f, 0xfff1e9d8.toInt()).apply { gravity = Gravity.CENTER; maxLines = 1 })
-                }
-                card.addView(cover, LinearLayout.LayoutParams(-1, dp(160)))
-                card.space(8)
+                val cover = BookCover(this, book.title, book.author, book.format, CoverTones.forKey(book.id))
+                covers += cover; coverTitles += cover.title
+                card.addView(cover, LinearLayout.LayoutParams(-1, idealCover))
+                card.space(10)
                 val saved = progressByBook[book.id]
-                val indicator = column().apply { tag = "progress-${book.id}" }
-                fillProgress(indicator, saved ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "Open to calculate progress" else "Calculating progress…")
+                val indicator = row().apply { tag = "progress-${book.id}"; minimumHeight = dp(18) }
+                fillProgress(indicator, saved ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "" else "Calculating…")
                 card.addView(indicator, LinearLayout.LayoutParams(-1, -2))
-                card.space(5)
-                val read = action(book.title) { open(book) }.apply {
+                card.space(10)
+                // Primary action and a compact overflow share one line, so every card shows both without scrolling.
+                val buttons = row()
+                val read = action(if (book.opened > 0) "Continue" else "Start reading") { open(book) }.apply {
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
                     contentDescription = "Read ${book.title} by ${book.author}"
                     setOnFocusChangeListener { _, focused ->
@@ -201,25 +211,44 @@ class MainActivity : Activity() {
                         elevation = if (focused) dp(6).toFloat() else 0f
                     }
                 }
-                card.addView(read, LinearLayout.LayoutParams(-1, -2))
-                card.addView(action("Book actions") { bookActions(book) }, LinearLayout.LayoutParams(-1, -2))
+                buttons.addView(read, LinearLayout.LayoutParams(0, -2, 1f))
+                buttons.space(8)
+                buttons.addView(iconAction(R.drawable.ic_more, "Book actions for ${book.title}") { bookActions(book) })
+                card.addView(buttons, LinearLayout.LayoutParams(-1, -2))
                 if (selectedBook == book.id) restore = read
+                if (book.id == recent?.id) recentRead = read
+                if (firstRead == null) firstRead = read
                 line.addView(card, LinearLayout.LayoutParams(cardWidth, -2))
             }
             grid.addView(line); grid.space(14)
         }
+        // Shrink covers (never the controls) until a full row of cards fits the visible area.
+        scroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
+            val firstRow = grid.getChildAt(0) ?: return@addOnLayoutChangeListener
+            val current = covers.firstOrNull()?.layoutParams?.height ?: return@addOnLayoutChangeListener
+            if (firstRow.height == 0) return@addOnLayoutChangeListener
+            val target = (bottom - top - (firstRow.height - current) - dp(4)).coerceIn(dp(96), idealCover)
+            if (target == current) return@addOnLayoutChangeListener
+            scroll.post {
+                covers.forEach { it.layoutParams = it.layoutParams.apply { height = target } }
+                coverTitles.forEach { it.maxLines = if (target < dp(140)) 2 else 3 }
+            }
+        }
         scroll.addView(grid); content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         content.space(8)
         content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open", 11f, Palette.muted).apply { letterSpacing = .08f })
-        (if (restoreSettingsFocus) settingsButton else restore ?: add).requestFocus(); restoreSettingsFocus = false
+        // Default focus lands on the most recently read book, so OK resumes it straight away.
+        (if (restoreSettingsFocus) settingsButton else restore ?: recentRead ?: firstRead ?: add).requestFocus(); restoreSettingsFocus = false
         catalog.filter { it.format == "epub" && it.opened > 0 && progressByBook[it.id]?.fraction == null && it.id !in failedIndexes }.forEach(::queueIndex)
     }
     private fun progressText(value: ReadingProgress): String {
         val percent = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" } ?: if (currentBook?.id in failedIndexes) "Progress unavailable" else "Calculating progress…"
         return if (value.chapter.isBlank()) percent else "${value.chapter} · $percent"
     }
-    private fun fillProgress(parent: LinearLayout, value: ReadingProgress, pendingMessage: String = "Calculating progress…") {
+    /** Renders a card's progress as one line: the bar, then the percentage (or a short status) to its right. */
+    private fun fillProgress(parent: LinearLayout, value: ReadingProgress, pendingMessage: String = "Calculating…") {
         parent.removeAllViews()
+        parent.orientation = LinearLayout.HORIZONTAL; parent.gravity = Gravity.CENTER_VERTICAL
         val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 1000; progress = ((value.fraction ?: 0.0) * 1000).toInt()
             isIndeterminate = false; isFocusable = false
@@ -227,9 +256,13 @@ class MainActivity : Activity() {
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Palette.line)
             contentDescription = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()} percent read" } ?: "Progress not calculated yet"
         }
-        parent.addView(bar, LinearLayout.LayoutParams(-1, dp(6)))
-        val unknown = if (parent.tag.toString().removePrefix("progress-") in failedIndexes) "Progress unavailable" else pendingMessage
-        parent.addView(label(value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}% read" } ?: unknown, 12f, Palette.muted))
+        parent.addView(bar, LinearLayout.LayoutParams(0, dp(6), 1f))
+        val unknown = if (parent.tag.toString().removePrefix("progress-") in failedIndexes) "Unavailable" else pendingMessage
+        val text = value.fraction?.let { "${kotlin.math.round(it * 100).toInt()}%" } ?: unknown
+        if (text.isNotEmpty()) {
+            parent.space(10)
+            parent.addView(label(text, 13f, Palette.muted).apply { maxLines = 1; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO })
+        }
     }
     private fun queueIndex(book: Book) {
         if (!indexing.add(book.id)) return
