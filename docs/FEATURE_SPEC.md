@@ -11,6 +11,8 @@ This update supersedes the EPUB-only/PDF-deferred and manual-pairing-renewal sta
 
 While Add book remains open, the TV stays awake and automatically replaces each expired ten-minute pairing code in place. Old tokens become invalid, refresh is deferred during an active upload, and the server still stops when leaving the screen or entering the background. The phone page accepts EPUB and PDF files and adapts to mobile widths. Native headings, landing columns, centered illustration mark, and square QR sizing must remain unclipped.
 
+### PDF Go to page amendment — 11 November 2026
+PDF reading controls offer Go to page: a grid of page numbers, ten per row, focused on the current page, with 100-page blocks to pick first in longer PDFs. Choosing a page opens it at the top. PDF outlines are not shown yet.
 ### Fullscreen reading amendment — 5 November 2026
 
 The book viewport fills the display for EPUB and PDF. Remove app-added outer margins, borders, width caps and EPUB pagination gutters. This supersedes the centered capped reading-column requirement for book content; controls retain their safe placement.

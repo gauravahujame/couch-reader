@@ -81,8 +81,10 @@ fun Context.iconAction(icon: Int, description: String, primary: Boolean = false,
  * One option of a mutually exclusive group (for example the reader theme). The active option keeps a
  * tinted fill, green border and check mark, so it stays distinguishable from the focused option,
  * which uses the standard green fill and gold border. Call [refresh] on every option after a change.
+ * [mark] = false drops the check mark for cells too narrow to hold it (the PDF page grid); the tint and border stay.
  */
-class ChoiceButton(context: Context, private val value: String, private val selected: () -> Boolean, onClick: () -> Unit) : Button(context) {
+class ChoiceButton(context: Context, private val value: String, private val selected: () -> Boolean,
+                   private val mark: Boolean = true, onClick: () -> Unit) : Button(context) {
     init {
         textSize = 16f; isAllCaps = false
         setPadding(context.dp(22), context.dp(10), context.dp(22), context.dp(10)); minHeight = context.dp(50)
@@ -94,7 +96,7 @@ class ChoiceButton(context: Context, private val value: String, private val sele
     }
     fun refresh() {
         val focused = hasFocus(); val active = selected()
-        text = if (active) "✓  $value" else value
+        text = if (active && mark) "✓  $value" else value
         contentDescription = if (active) "$value, selected" else value
         background = shape(if (focused) Palette.green else if (active) Palette.greenTint else Palette.white,
             border = if (focused) Palette.gold else if (active) Palette.green else Palette.line,

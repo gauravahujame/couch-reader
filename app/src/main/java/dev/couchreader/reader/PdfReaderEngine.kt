@@ -33,8 +33,14 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
     private var descriptor: ParcelFileDescriptor? = null
     private var renderer: PdfRenderer? = null
     private var page = locator?.takeIf { it.format == "pdf" }?.page ?: 0
-    private var pageCount = 0
+    /** Zero until the document opens. Read on the UI thread; written there via frame.post ordering. */
+    var pageCount = 0
+        private set
+    /** Zero-based page currently shown. */
+    val currentPage: Int get() = page
     private val pendingTurns = java.util.ArrayDeque<Boolean>()
+    // A jump requested while a page is still rendering; it replaces any queued turns.
+    private var pendingJump: Int? = null
     private var bitmap: Bitmap? = null
     private var loading = true
     @Volatile private var closed = false
@@ -100,7 +106,8 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
                             changingPage = false; loading = false
                             save()
                             if (!initialized) { initialized = true; onEvent("ready", "{}") }
-                            if (pendingTurns.isNotEmpty()) turn(pendingTurns.removeFirst())
+                            val jump = pendingJump; pendingJump = null
+                            if (jump != null) chapter("page:$jump") else if (pendingTurns.isNotEmpty()) turn(pendingTurns.removeFirst())
                         }
                     })
                     image.requestLayout()
@@ -134,9 +141,12 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
             -1f,0f,0f,0f,255f, 0f,-1f,0f,0f,255f, 0f,0f,-1f,0f,255f, 0f,0f,0f,1f,0f
         ))) else null
     }
+    /** [href] is "" (first page) or "page:N" with a zero-based N. */
     override fun chapter(href: String) {
-        if (loading || closed) return
+        if (closed) return
         val target = if (href.isBlank()) 0 else href.removePrefix("page:").toIntOrNull() ?: return
+        if (loading) { pendingTurns.clear(); pendingJump = target; return }
+        if (pageCount == 0) return
         page = target.coerceIn(0, pageCount - 1); render()
     }
     override fun close() {

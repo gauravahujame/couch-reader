@@ -542,6 +542,7 @@ class MainActivity : Activity() {
         dark = ChoiceButton(this, "Dark", { pref.dark }) { theme(true) }
         themes.addView(light); themes.space(10); themes.addView(dark); panel.addView(themes); panel.space(10)
         if (!isPdf) panel.addView(action("Chapters   →") { chapterList() }, LinearLayout.LayoutParams(-1, -2))
+        else panel.addView(action("Go to page   →") { pageList() }, LinearLayout.LayoutParams(-1, -2))
         panel.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(-1, -2))
         panel.space(10)
         val resume = action("Back to reading", true) { hideOverlay() }
@@ -637,6 +638,51 @@ class MainActivity : Activity() {
         val back = action("Back to controls") { controls() }; panel.addView(back)
         (if (chapters.isEmpty()) back else panel.getChildAt(2) ?: back).requestFocus()
         panel.tag = "chapters"
+    }
+    /**
+     * PDF page picker. Ten pages per row, so Up/Down moves ten pages and Left/Right one. PDFs longer than
+     * 100 pages first show a row of 100-page blocks; picking a block redraws the grid with its pages.
+     */
+    private fun pageList(block: Int? = null) {
+        val pdf = engine as? PdfReaderEngine ?: return
+        val blockSize = 100
+        val panel = overlayPanel("Go to page"); panel.tag = "pages"
+        val count = pdf.pageCount; val current = pdf.currentPage
+        val back = action("Back to controls") { controls() }
+        if (count == 0) {
+            panel.addView(label("Pages are still loading. Try again in a moment.", 17f)); panel.space(16)
+            panel.addView(back); back.requestFocus(); return
+        }
+        panel.addView(label("You’re on page ${current + 1} of $count.", 17f, Palette.muted)); panel.space(14)
+        fun grid(cells: List<View>, columns: Int) {
+            cells.chunked(columns).forEachIndexed { index, line ->
+                if (index > 0) panel.space(8)
+                val row = row()
+                for (column in 0 until columns) {
+                    if (column > 0) row.space(8)
+                    // Empty fillers keep a short last row aligned with the columns above it.
+                    row.addView(line.getOrNull(column) ?: View(this), LinearLayout.LayoutParams(0, -2, 1f))
+                }
+                panel.addView(row, LinearLayout.LayoutParams(-1, -2))
+            }
+        }
+        fun compact(button: ChoiceButton, side: Int) = button.apply { minWidth = 0; minimumWidth = 0; setPadding(dp(side), dp(10), dp(side), dp(10)) }
+        val start = block ?: (current / blockSize * blockSize)
+        var focus: View? = null
+        if (count > blockSize) {
+            grid((0 until count step blockSize).map { first ->
+                compact(ChoiceButton(this, "${first + 1}–${minOf(first + blockSize, count)}", { first == start }) { pageList(first) }, 8)
+                    .also { if (block != null && first == start) focus = it }
+            }, 4)
+            panel.space(18)
+        }
+        val pages = (start until minOf(start + blockSize, count)).map { index ->
+            compact(ChoiceButton(this, "${index + 1}", { index == current }, mark = false) { hideOverlay(); engine?.chapter("page:$index") }, 0)
+                .also { if (focus == null && index == current) focus = it }
+        }
+        grid(pages, 10)
+        panel.space(16); panel.addView(back)
+        (focus ?: pages.firstOrNull() ?: back).requestFocus()
     }
     private fun finishedBook() {
         val panel = overlayPanel("The end. Take a moment.")
