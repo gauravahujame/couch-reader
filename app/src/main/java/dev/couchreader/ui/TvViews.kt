@@ -40,19 +40,19 @@ fun shape(color: Int, radius: Float = 12f, border: Int? = null, stroke: Int = 2)
 fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit): Button = Button(this).apply {
     text = value; textSize = 16f; isAllCaps = false
     setPadding(dp(22), dp(10), dp(22), dp(10)); minHeight = dp(50)
-    background = shape(if (primary) Palette.green else Palette.white)
-    setTextColor(if (primary) Color.WHITE else Palette.ink)
     isFocusable = true
     // The platform Button's default StateListAnimator adds a 2dp resting elevation whose shadow
-    // is clipped by tight parents. Elevation is owned by the focus listener below instead.
+    // is clipped by tight parents. Elevation is owned by paint() instead.
     stateListAnimator = null
-    elevation = 0f
-    setOnFocusChangeListener { _, focused ->
+    // One painter for both states, so a button looks the same before and after its first focus.
+    fun paint(focused: Boolean) {
         background = shape(if (focused || primary) Palette.green else Palette.white,
             border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
         setTextColor(if (focused || primary) Color.WHITE else Palette.ink)
         elevation = if (focused) dp(6).toFloat() else 0f
     }
+    paint(false)
+    setOnFocusChangeListener { _, focused -> paint(focused) }
     setOnClickListener { onClick() }
 }
 fun LinearLayout.space(size: Int) { addView(View(context), LinearLayout.LayoutParams(context.dp(size), context.dp(size))) }

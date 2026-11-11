@@ -196,6 +196,7 @@ class MainActivity : Activity() {
                         if (focused) selectedBook = book.id
                         background = shape(if (focused) Palette.green else Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
                         setTextColor(if (focused) Color.WHITE else Palette.ink)
+                        elevation = if (focused) dp(6).toFloat() else 0f
                     }
                 }
                 card.addView(read, LinearLayout.LayoutParams(-1, -2))
@@ -516,7 +517,7 @@ class MainActivity : Activity() {
         val about = column().apply {
             isFocusable = true
             setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = shape(Palette.white)
+            background = shape(Palette.white, border = Palette.line, stroke = dp(1))
             setOnFocusChangeListener { _, focused ->
                 background = shape(Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
                 if (focused) description.text = "App version and books stored on this TV. Storage includes all private book files."

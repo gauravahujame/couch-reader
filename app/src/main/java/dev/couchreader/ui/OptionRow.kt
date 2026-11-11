@@ -22,7 +22,8 @@ class OptionRow(context: Context, title: String, private val value: () -> String
             for (i in 0 until childCount) (getChildAt(i) as android.widget.TextView).setTextColor(if (hasFocus) Color.WHITE else Palette.ink)
             if (hasFocus) focused()
         }
-        background = shape(Palette.white)
+        // Match the unfocused look the focus listener restores, so the first focus changes nothing else.
+        background = shape(Palette.white, border = Palette.line, stroke = context.dp(1))
         refresh()
     }
     private fun refresh() { display.text = "◀  ${value()}  ▶"; contentDescription = "${(getChildAt(0) as android.widget.TextView).text}, ${value()}" }
