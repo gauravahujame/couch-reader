@@ -530,8 +530,11 @@ class MainActivity : Activity() {
         if (!isPdf) panel.addView(sizes)
         panel.space(10)
         val themes = row()
-        themes.addView(action("Warm light") { update(pref.copy(dark = false)) }); themes.space(10)
-        themes.addView(action("Dark") { update(pref.copy(dark = true)) }); panel.addView(themes); panel.space(10)
+        lateinit var light: ChoiceButton; lateinit var dark: ChoiceButton
+        fun theme(isDark: Boolean) { update(pref.copy(dark = isDark)); light.refresh(); dark.refresh() }
+        light = ChoiceButton(this, "Warm light", { !pref.dark }) { theme(false) }
+        dark = ChoiceButton(this, "Dark", { pref.dark }) { theme(true) }
+        themes.addView(light); themes.space(10); themes.addView(dark); panel.addView(themes); panel.space(10)
         if (!isPdf) panel.addView(action("Chapters   →") { chapterList() }, LinearLayout.LayoutParams(-1, -2))
         panel.addView(action("All settings →") { settings() }, LinearLayout.LayoutParams(-1, -2))
         panel.space(10)

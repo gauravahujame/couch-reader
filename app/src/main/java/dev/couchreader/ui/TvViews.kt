@@ -24,6 +24,7 @@ object Palette {
     val line = Color.rgb(194, 199, 181)
     val white = Color.rgb(255, 253, 246)
     val gold = Color.rgb(170, 107, 43)
+    val greenTint = Color.rgb(226, 231, 214)
 }
 fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 fun Context.label(value: String, size: Float = 18f, color: Int = Palette.ink, serif: Boolean = false) = TextView(this).apply {
@@ -75,6 +76,32 @@ fun Context.iconAction(icon: Int, description: String, primary: Boolean = false,
     paint(false)
     setOnFocusChangeListener { _, focused -> paint(focused) }
     setOnClickListener { onClick() }
+}
+/**
+ * One option of a mutually exclusive group (for example the reader theme). The active option keeps a
+ * tinted fill, green border and check mark, so it stays distinguishable from the focused option,
+ * which uses the standard green fill and gold border. Call [refresh] on every option after a change.
+ */
+class ChoiceButton(context: Context, private val value: String, private val selected: () -> Boolean, onClick: () -> Unit) : Button(context) {
+    init {
+        textSize = 16f; isAllCaps = false
+        setPadding(context.dp(22), context.dp(10), context.dp(22), context.dp(10)); minHeight = context.dp(50)
+        isFocusable = true
+        stateListAnimator = null
+        refresh()
+        setOnFocusChangeListener { _, _ -> refresh() }
+        setOnClickListener { onClick() }
+    }
+    fun refresh() {
+        val focused = hasFocus(); val active = selected()
+        text = if (active) "✓  $value" else value
+        contentDescription = if (active) "$value, selected" else value
+        background = shape(if (focused) Palette.green else if (active) Palette.greenTint else Palette.white,
+            border = if (focused) Palette.gold else if (active) Palette.green else Palette.line,
+            stroke = context.dp(if (focused) 3 else if (active) 2 else 1))
+        setTextColor(if (focused) Color.WHITE else Palette.ink)
+        elevation = if (focused) context.dp(6).toFloat() else 0f
+    }
 }
 fun LinearLayout.space(size: Int) { addView(View(context), LinearLayout.LayoutParams(context.dp(size), context.dp(size))) }
 // clipChildren = false lets a focused button's elevation shadow draw past the container's edges.
