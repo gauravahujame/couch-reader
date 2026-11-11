@@ -116,9 +116,11 @@ class MainActivity : Activity() {
         val content = page()
         val catalog = books.books()
         val progressByBook = progress.all() + liveProgress
-        val add = action("＋  Add book", primary = true) { showImport() }
+        // An empty library keeps a labelled call to action in the body; otherwise "Add book" is a header icon.
+        val add = if (catalog.isEmpty()) action("＋  Add book", primary = true) { showImport() }
+            else iconAction(R.drawable.ic_add, "Add book", primary = true) { showImport() }
         val headerActions = row()
-        val settingsButton = action("Settings") { settings() }
+        val settingsButton = iconAction(R.drawable.ic_settings, "Settings") { settings() }
         headerActions.addView(settingsButton)
         if (catalog.isNotEmpty()) { headerActions.space(10); headerActions.addView(add) }
         masthead(content, headerActions)
@@ -294,7 +296,7 @@ class MainActivity : Activity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val generation = ++pairingGeneration
         val content = page()
-        val back = action("Back to library") { library() }
+        val back = iconAction(R.drawable.ic_back, "Back to library") { library() }
         masthead(content, back)
         val body = row()
         val instructions = column()
@@ -479,7 +481,7 @@ class MainActivity : Activity() {
             isFocusableInTouchMode = false
         }
         settingsView = content; root.addView(content, FrameLayout.LayoutParams(-1, -1))
-        masthead(content, action("Back") { leaveSettings() })
+        masthead(content, iconAction(R.drawable.ic_back, if (settingsFromReader) "Back to reading" else "Back to library") { leaveSettings() })
         content.addView(label("Settings", 32f, serif = true)); content.space(10)
         val description = label("", 15f, Palette.muted).apply { minHeight = dp(42) }
         val rows = column()

@@ -9,7 +9,9 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
+import android.content.res.ColorStateList
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -49,6 +51,25 @@ fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit)
         background = shape(if (focused || primary) Palette.green else Palette.white,
             border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
         setTextColor(if (focused || primary) Color.WHITE else Palette.ink)
+        elevation = if (focused) dp(6).toFloat() else 0f
+    }
+    paint(false)
+    setOnFocusChangeListener { _, focused -> paint(focused) }
+    setOnClickListener { onClick() }
+}
+/** A square, icon-only counterpart to [action]. [description] is read by TalkBack and used by tests. */
+fun Context.iconAction(icon: Int, description: String, primary: Boolean = false, onClick: () -> Unit): ImageButton = ImageButton(this).apply {
+    setImageResource(icon); contentDescription = description
+    scaleType = ImageView.ScaleType.CENTER
+    minimumWidth = dp(50); minimumHeight = dp(50)
+    setPadding(dp(13), dp(13), dp(13), dp(13))
+    isFocusable = true
+    stateListAnimator = null
+    elevation = 0f
+    fun paint(focused: Boolean) {
+        background = shape(if (focused || primary) Palette.green else Palette.white,
+            border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
+        imageTintList = ColorStateList.valueOf(if (focused || primary) Color.WHITE else Palette.ink)
         elevation = if (focused) dp(6).toFloat() else 0f
     }
     paint(false)

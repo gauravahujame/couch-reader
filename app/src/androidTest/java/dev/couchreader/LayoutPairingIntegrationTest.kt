@@ -42,9 +42,11 @@ class LayoutPairingIntegrationTest {
             fail("Timed out waiting for UI state")
         }
         fun allViews() = views(activity.window.decorView)
+        // An empty library shows a labelled button; a populated one shows an icon-only header button.
+        fun isAddBook(view: View) = (view is Button && view.text.contains("Add book")) || view.contentDescription == "Add book"
         var server: UploadServer? = null
         try {
-            waitUntil { allViews().filterIsInstance<Button>().any { it.text.contains("Add book") } }
+            waitUntil { allViews().any(::isAddBook) }
             instrumentation.runOnMainSync {
                 allViews().filterIsInstance<TextView>().firstOrNull { it.text.startsWith("Make yourself") }?.let { heading ->
                     val layout = heading.layout
@@ -55,7 +57,7 @@ class LayoutPairingIntegrationTest {
                     val parent = mark.parent as View
                     assertEquals(parent.width / 2f, (mark.left + mark.right) / 2f, 1f)
                 }
-                allViews().filterIsInstance<Button>().first { it.text.contains("Add book") }.performClick()
+                allViews().first(::isAddBook).performClick()
                 server = MainActivity::class.java.getDeclaredField("server").apply { isAccessible = true }.get(activity) as UploadServer
             }
             val upload = server!!

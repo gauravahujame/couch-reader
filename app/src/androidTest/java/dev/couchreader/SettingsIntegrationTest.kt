@@ -47,7 +47,7 @@ class SettingsIntegrationTest {
         try {
             awaitCondition("Library not ready") {
                 var done = false
-                i.runOnMainSync { done = all(activity.window.decorView).filterIsInstance<TextView>().any { it.text == "Settings" } }
+                i.runOnMainSync { done = all(activity.window.decorView).any { it.contentDescription == "Settings" } }
                 done
             }
             i.runOnMainSync { activity.open(book) }
@@ -118,7 +118,7 @@ class SettingsIntegrationTest {
         try {
             awaitCondition("Library not ready") {
                 var done = false
-                i.runOnMainSync { done = all(activity.window.decorView).filterIsInstance<TextView>().any { it.text == "Settings" } }
+                i.runOnMainSync { done = all(activity.window.decorView).any { it.contentDescription == "Settings" } }
                 done
             }
             i.runOnMainSync { activity.settings() }
@@ -153,7 +153,7 @@ class SettingsIntegrationTest {
                 assertTrue(texts.any { it.startsWith("Version  ") })
             }
             key(KeyEvent.KEYCODE_BACK)
-            i.runOnMainSync { assertEquals("Settings", (activity.currentFocus as TextView).text.toString()) }
+            i.runOnMainSync { assertEquals("Settings", activity.currentFocus?.contentDescription?.toString()) }
             // Read the XML file directly: a SharedPreferences get() only proves its in-memory cache.
             val stored = java.io.File(context.applicationInfo.dataDir, "shared_prefs/reading.xml")
             awaitCondition("Preferences did not reach disk") {

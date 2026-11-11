@@ -60,7 +60,7 @@ class ProgressIntegrationTest {
             }
         }
         try {
-            await("Library not ready") { onUi { views(activity.window.decorView).filterIsInstance<TextView>().any { it.text == "Settings" } } }
+            await("Library not ready") { onUi { views(activity.window.decorView).any { it.contentDescription == "Settings" } } }
             i.runOnMainSync { activity.open(book) }
             await("Reader not ready") { onUi { activity.ready } }
             // No generated page number may enter the resume locator.
