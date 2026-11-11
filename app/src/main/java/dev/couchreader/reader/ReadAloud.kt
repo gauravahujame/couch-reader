@@ -76,8 +76,8 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
             override fun onStop(id: String, interrupted: Boolean) {}
         })
         ttsReady = true
-        if (state == State.PREPARING) setState(State.PAUSED)
-        if (playWhenReady) { playWhenReady = false; play() }
+        // Asked to play: stay in PREPARING until the voice actually starts, so "Paused" never flashes.
+        if (playWhenReady) { playWhenReady = false; play() } else settle()
     }
 
     /** Shows the highlight on the current page, then starts the voice if [play]. */
@@ -93,9 +93,9 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         if (ttsFailed) { onNotice(NO_VOICE); return }
         if (!ttsReady) { playWhenReady = true; return }
         if (loading) { playWhenReady = true; return }
-        if (sentences.isEmpty()) { onNotice("This page has no text to read. Press → for the next page."); return }
+        if (sentences.isEmpty()) { settle(); onNotice("This page has no text to read. Press → for the next page."); return }
         if (audio.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            onNotice("Another app is using the speakers."); return
+            settle(); onNotice("Another app is using the speakers."); return
         }
         emptyPagesSkipped = 0
         setState(State.PLAYING)
@@ -104,7 +104,7 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
 
     fun pause() {
         playWhenReady = false
-        if (state != State.PLAYING) return
+        if (state != State.PLAYING) { settle(); return }
         silence()
         audio.abandonAudioFocusRequest(focusRequest)
         setState(State.PAUSED)
@@ -206,7 +206,7 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         tailUtterance = null
         if (++emptyPagesSkipped > 5) {
             emptyPagesSkipped = 0; playWhenReady = false
-            if (state == State.PLAYING) { silence(); audio.abandonAudioFocusRequest(focusRequest); setState(State.PAUSED) }
+            if (state == State.PLAYING) { silence(); audio.abandonAudioFocusRequest(focusRequest); setState(State.PAUSED) } else settle()
             onNotice("No readable text on the next few pages. Read-aloud is paused.")
             return
         }
@@ -287,6 +287,9 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         onNotice("The voice stopped unexpectedly. Press OK to try again.")
         pause()
     }
+
+    /** Leaves PREPARING for PAUSED once the voice is ready but is not going to start on its own. */
+    private fun settle() { if (state == State.PREPARING && ttsReady) setState(State.PAUSED) }
 
     // Diagnostics record state and sentence index only, never book text.
     private fun setState(value: State) { state = value; android.util.Log.i(TAG, "state=$value index=$index of ${sentences.size}"); onState(value) }

@@ -545,7 +545,7 @@ class MainActivity : Activity() {
         panel.addView(label(currentBook?.title.orEmpty(), 16f, Palette.muted)); panel.space(8)
         panel.addView(label(progressText(readerProgress), 17f, Palette.muted).apply { tag = "reader-progress" })
         panel.space(12)
-        panel.addView(action(if (readAloud == null) "▶   Read aloud" else "▶   Back to read-aloud") { startReadAloud(play = false) }, LinearLayout.LayoutParams(-1, -2))
+        panel.addView(action(if (readAloud == null) "▶   Read aloud" else "▶   Back to read-aloud") { startReadAloud(play = readAloud == null) }, LinearLayout.LayoutParams(-1, -2))
         panel.space(12)
         var pref = preferences.get()
         val isPdf = currentBook?.format == "pdf"
@@ -735,8 +735,8 @@ class MainActivity : Activity() {
         KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
         KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP)
     /**
-     * Enters read-aloud on the current page. The highlight appears first; the voice starts only with
-     * [play] or when the reader presses OK, so they can move to another sentence before it speaks.
+     * Enters read-aloud on the current page. With [play] the voice starts as soon as it has loaded;
+     * without it only the highlight appears, and OK starts the voice.
      */
     private fun startReadAloud(play: Boolean) {
         val renderer = engine ?: return
