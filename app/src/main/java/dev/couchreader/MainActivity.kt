@@ -555,7 +555,7 @@ class MainActivity : Activity() {
         val sizes = row()
         fun update(value: ReadingPreferences) { pref = value; preferences.save(pref); engine?.preferences(pref); sizeLabel.text = "Text size  ·  ${ReadingPreferences.sizes[pref.size]} px" }
         sizes.addView(action("A−  Smaller") { update(pref.copy(size = (pref.size - 1).coerceAtLeast(0))) })
-        sizes.space(10); sizes.addView(action("A＋  Larger") { update(pref.copy(size = (pref.size + 1).coerceAtMost(5))) })
+        sizes.space(10); sizes.addView(action("A＋  Larger") { update(pref.copy(size = (pref.size + 1).coerceAtMost(ReadingPreferences.sizes.lastIndex))) })
         if (!isPdf) panel.addView(sizes)
         panel.space(10)
         val themes = row()
@@ -626,7 +626,7 @@ class MainActivity : Activity() {
         }
         heading("Text")
         val first = option("Text size · Applies to EPUB", "Changes EPUB text across all books. PDF pages keep their printed layout.",
-            { "${ReadingPreferences.sizes[pref.size]} px" }) { save(pref.copy(size = (pref.size + it).coerceIn(0, 5))) }
+            { "${ReadingPreferences.sizes[pref.size]} px" }) { save(pref.copy(size = (pref.size + it).coerceIn(0, ReadingPreferences.sizes.lastIndex))) }
         heading("Page")
         option("Two-page spread · Applies to EPUB", "Shows two pages on wide screens, with space between them.",
             { if (pref.spread) "On" else "Off" }) { save(pref.copy(spread = !pref.spread)) }

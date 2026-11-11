@@ -73,12 +73,12 @@ class SettingsIntegrationTest {
             assertAnchor()
             i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_UP)
             // Step through all sizes repeatedly, asserting the original passage after each reflow.
-            for (code in List(7) { KeyEvent.KEYCODE_DPAD_RIGHT } + List(7) { KeyEvent.KEYCODE_DPAD_LEFT }) {
+            for (code in List(12) { KeyEvent.KEYCODE_DPAD_RIGHT } + List(12) { KeyEvent.KEYCODE_DPAD_LEFT }) {
                 i.sendKeyDownUpSync(code); settle(); assertAnchor()
             }
             assertEquals(0, PreferencesRepository(context).get().size)
-            repeat(7) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); settle(); assertAnchor() }
-            assertEquals(5, PreferencesRepository(context).get().size)
+            repeat(12) { i.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT); settle(); assertAnchor() }
+            assertEquals(ReadingPreferences.sizes.lastIndex, PreferencesRepository(context).get().size)
             val positions = dev.couchreader.data.PositionRepository(db)
             awaitCondition("Saved passage drifted") { positions.get(book.id)?.cfi == anchor }
             // Navigation clears the pending passage so later changes anchor to the newly read page.
@@ -125,7 +125,7 @@ class SettingsIntegrationTest {
             i.waitForIdleSync()
             fun key(code: Int) { i.sendKeyDownUpSync(code); i.waitForIdleSync() }
             key(KeyEvent.KEYCODE_DPAD_RIGHT)
-            assertEquals(3, PreferencesRepository(context).get().size)
+            assertEquals(ReadingPreferences.DEFAULT_SIZE + 1, PreferencesRepository(context).get().size)
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             i.runOnMainSync { assertTrue(activity.currentFocus is OptionRow) }
             key(KeyEvent.KEYCODE_DPAD_CENTER)
@@ -170,7 +170,7 @@ class SettingsIntegrationTest {
                             parser.next()
                         }
                     }
-                    values["version"] == "2" && values["size"] == "3" && values["dark"] == "false" && values["spread"] == "true" && values["sleepMinutes"] == "15"
+                    values["version"] == "3" && values["size"] == (ReadingPreferences.DEFAULT_SIZE + 1).toString() && values["dark"] == "false" && values["spread"] == "true" && values["sleepMinutes"] == "15"
                 }.getOrDefault(false)
             }
         } finally {

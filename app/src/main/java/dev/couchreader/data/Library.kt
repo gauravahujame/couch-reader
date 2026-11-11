@@ -39,12 +39,15 @@ data class Locator(val cfi: String = "", val href: String = "", val version: Int
         }.getOrNull()
     }
 }
-data class ReadingPreferences(val size: Int = 2, val dark: Boolean = false,
+data class ReadingPreferences(val size: Int = DEFAULT_SIZE, val dark: Boolean = false,
                               val spread: Boolean = false, val sleepMinutes: Int = 30, val speechRate: Int = 100,
                               /** Text-to-speech voice name; empty means the TV's default voice. */
                               val voice: String = "") {
     companion object {
-        val sizes = listOf(24, 28, 32, 36, 42, 48); val sleepOptions = listOf(15, 30, 60, 0)
+        /** EPUB text sizes in CSS px; [size] indexes this list. The default matches PDF body text on a 1080p TV. */
+        val sizes = listOf(14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48)
+        const val DEFAULT_SIZE = 1
+        val sleepOptions = listOf(15, 30, 60, 0)
         /** Read-aloud speed in percent of the voice's normal rate. */
         val speechRates = listOf(75, 90, 100, 115, 130, 150, 175, 200)
     }
@@ -189,11 +192,15 @@ class ProgressRepository(private val db: LibraryDatabase) {
 }
 class PreferencesRepository(context: Context) {
     private val storage = context.getSharedPreferences("reading", Context.MODE_PRIVATE)
-    fun get() = ReadingPreferences(storage.getInt("size", 2).coerceIn(0, 5), storage.getBoolean("dark", false),
+    // Before version 3, "size" indexed the old 24–48 px list, whose smallest size was larger than PDF text.
+    // Those saved sizes are dropped so every reader starts from the new default.
+    private fun size() = if (storage.getInt("version", 0) < 3) ReadingPreferences.DEFAULT_SIZE
+        else storage.getInt("size", ReadingPreferences.DEFAULT_SIZE).coerceIn(0, ReadingPreferences.sizes.lastIndex)
+    fun get() = ReadingPreferences(size(), storage.getBoolean("dark", false),
         storage.getBoolean("spread", false), storage.getInt("sleepMinutes", 30).takeIf { it in ReadingPreferences.sleepOptions } ?: 30,
         storage.getInt("speechRate", 100).takeIf { it in ReadingPreferences.speechRates } ?: 100,
         storage.getString("voice", "").orEmpty().take(200))
-    fun save(value: ReadingPreferences) { storage.edit().putInt("version", 2).putInt("size", value.size).putBoolean("dark", value.dark)
+    fun save(value: ReadingPreferences) { storage.edit().putInt("version", 3).putInt("size", value.size).putBoolean("dark", value.dark)
         .putBoolean("spread", value.spread).putInt("sleepMinutes", value.sleepMinutes)
         .putInt("speechRate", value.speechRate).putString("voice", value.voice).apply() }
 }
