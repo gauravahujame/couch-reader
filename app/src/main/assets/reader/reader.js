@@ -48,7 +48,7 @@ window.indexProgress=function(locator){if(locator)readingInfo(locator);else tell
 const tell=(type,value)=>ReaderBridge.event(type,JSON.stringify(value||{}));
 function serial(action){queue=queue.then(action).catch(()=>tell('error',{message:'This section could not be displayed. Open Chapters to try another section.'}));return queue;}
 function applyPreferences(p){
- currentPreferences=p;const bg=p.dark?'#202822':'#f5f0e5',fg=p.dark?'#efece0':'#28372e';document.body.style.background=bg;document.documentElement.style.background=bg;
+ currentPreferences=p;const bg=p.dark?'#000000':'#f5f0e5',fg=p.dark?'#efece0':'#28372e';document.body.style.background=bg;document.documentElement.style.background=bg;
  rendition.themes.default({
  '@font-face':{'font-family':'Literata','src':'url("https://reader.invalid/reader/literata.ttf")'},
  'html':{'background':bg+' !important','color':fg+' !important'},

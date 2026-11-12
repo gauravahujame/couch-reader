@@ -152,7 +152,8 @@ class PdfReaderEngine(context: Context, books: BookRepository, book: Book, locat
         if (!loading && !closed) scroll.smoothScrollBy(0, direction * (scroll.height * .7f).toInt())
     }
     override fun preferences(value: ReadingPreferences) {
-        frame.setBackgroundColor(if (value.dark) Color.rgb(32, 40, 34) else Color.rgb(245, 240, 229))
+        // Dark matches the inverted page, which renders a white PDF background as black.
+        frame.setBackgroundColor(if (value.dark) Color.BLACK else Color.rgb(245, 240, 229))
         marker.color = if (value.dark) Color.argb(110, 214, 170, 90) else Color.argb(80, 170, 107, 43)
         image.colorFilter = if (value.dark) ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
             -1f,0f,0f,0f,255f, 0f,-1f,0f,0f,255f, 0f,0f,-1f,0f,255f, 0f,0f,0f,1f,0f
