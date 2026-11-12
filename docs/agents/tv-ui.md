@@ -8,13 +8,17 @@ Each focusable control has a single `paint(focused)` function. It runs once at c
 
 Known regression: a control created with one background and repainted by its focus listener with a different one (for example, borderless at creation and a 1dp `Palette.line` border after) changes its look the first time focus passes over it. Users report this as "it fixes itself after I highlight it".
 
-When a call site replaces the listener with `setOnFocusChangeListener` (the card's read button in `MainActivity.library()` does), the replacement owns every property the helper's `paint` set: background, text or tint color, and `elevation`. `OptionRow` and the Settings About row follow the same rule by hand.
+When a call site replaces the listener with `setOnFocusChangeListener` (the card's read button in `MainActivity.library()` does), call `paintAction(focused)` from the replacement so it keeps background, text color, elevation and scale in step. `OptionRow` and the Settings About row follow the same rule by hand.
+
+## Focus look
+
+The user asked for a restrained focus system. Buttons: green at rest has no border and no shadow; focused adds a 2dp `Palette.gold` outline, 2dp elevation and a 1.02× scale; pressed swaps to `Palette.greenPressed`. White (secondary) buttons still turn green on focus, because an outline alone is too faint across a room. Rows, the About box and `PageDial` use the same 2dp gold outline but no scale, since a full-width row would grow past the scroller's clip. Don't go back to 3dp outlines or 6dp shadows.
 
 ## Shadows
 
-- Set `stateListAnimator = null` on every `Button` or `ImageButton`. The platform animator gives a 2dp resting elevation that the code never sees, and tight parents clip its shadow. Elevation comes only from `paint`: 6dp focused, 0 otherwise.
+- Set `stateListAnimator = null` on every `Button` or `ImageButton`. The platform animator gives a 2dp resting elevation that the code never sees, and tight parents clip its shadow. Elevation comes only from `paint`: 2dp focused, 0 otherwise.
 - A shadow draws outside the view, so every ancestor up to the page must leave it unclipped. `row()` and `column()` set `clipChildren = false` and `clipToPadding = false`, and `page()` is a `column()`. A plain `LinearLayout`/`FrameLayout` in that chain clips the shadow again.
-- Because those parents no longer clip, a scrolling region draws over its siblings unless it clips itself. The library `ScrollView` uses `outlineProvider = BOUNDS` with `clipToOutline = true`; any new scroller needs the same. Shadows of controls inside a scroller are therefore cut at the scroller's edge.
+- Because those parents no longer clip, a scrolling region draws over its siblings unless it clips itself. The library `ScrollView` uses `outlineProvider = BOUNDS` with `clipToOutline = true`; any new scroller needs the same. For a list with section headings under a fixed title, use `SectionScrollView` and register each heading with `addHeading`: it only rests with a heading at its top edge, so no heading is left half cut. Shadows of controls inside a scroller are therefore cut at the scroller's edge.
 
 ## Selected vs focused
 

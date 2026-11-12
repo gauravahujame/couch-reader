@@ -220,9 +220,7 @@ class MainActivity : Activity() {
                     contentDescription = if (book.author.isBlank()) "Read ${book.title}" else "Read ${book.title} by ${book.author}"
                     setOnFocusChangeListener { _, focused ->
                         if (focused) selectedBook = book.id
-                        background = shape(if (focused) Palette.green else Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
-                        setTextColor(if (focused) Color.WHITE else Palette.ink)
-                        elevation = if (focused) dp(6).toFloat() else 0f
+                        paintAction(focused)
                     }
                 }
                 buttons.addView(read, LinearLayout.LayoutParams(0, -2, 1f))
@@ -705,7 +703,7 @@ class MainActivity : Activity() {
             setPadding(dp(16), dp(12), dp(16), dp(12))
             background = shape(Palette.white, border = Palette.line, stroke = dp(1))
             setOnFocusChangeListener { _, focused ->
-                background = shape(Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
+                background = shape(Palette.white, border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 2 else 1))
                 if (focused) description.text = "App version and books stored on this TV. Storage includes all private book files."
             }
         }

@@ -25,6 +25,7 @@ object Palette {
     val white = Color.rgb(255, 253, 246)
     val gold = Color.rgb(170, 107, 43)
     val greenTint = Color.rgb(226, 231, 214)
+    val greenPressed = Color.rgb(29, 56, 43)
 }
 fun Context.dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 fun Context.label(value: String, size: Float = 18f, color: Int = Palette.ink, serif: Boolean = false) = TextView(this).apply {
@@ -40,6 +41,34 @@ fun shape(color: Int, radius: Float = 12f, border: Int? = null, stroke: Int = 2)
     setColor(color); cornerRadius = radius
     border?.let { setStroke(stroke, it) }
 }
+/**
+ * The button focus system: a green button has no border at rest; focus adds a 2dp copper outline,
+ * a faint 2dp shadow and a 1.02× lift; pressing darkens the fill. A white (secondary) button keeps its
+ * 1dp hairline at rest and takes the green focused look, so focus never relies on the outline alone.
+ */
+private const val FOCUS_SCALE = 1.02f
+private fun Context.buttonBackground(focused: Boolean, rest: Int): android.graphics.drawable.Drawable {
+    val fill = if (focused) Palette.green else rest
+    val border = if (focused) Palette.gold else if (rest == Palette.green) null else Palette.line
+    val stroke = dp(if (focused) 2 else 1)
+    return android.graphics.drawable.StateListDrawable().apply {
+        if (fill == Palette.green) addState(intArrayOf(android.R.attr.state_pressed), shape(Palette.greenPressed, border = border, stroke = stroke))
+        addState(intArrayOf(), shape(fill, border = border, stroke = stroke))
+    }
+}
+private fun View.liftForFocus(focused: Boolean) {
+    elevation = if (focused) context.dp(2).toFloat() else 0f
+    val scale = if (focused) FOCUS_SCALE else 1f
+    animate().cancel()
+    if (!isAttachedToWindow || scaleX == scale) { scaleX = scale; scaleY = scale }
+    else animate().scaleX(scale).scaleY(scale).setDuration(120).start()
+}
+/** Paints an [action] button. Call sites that replace its focus listener call this from their own. */
+fun Button.paintAction(focused: Boolean, primary: Boolean = false) {
+    background = context.buttonBackground(focused, if (primary) Palette.green else Palette.white)
+    setTextColor(if (focused || primary) Color.WHITE else Palette.ink)
+    liftForFocus(focused)
+}
 fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit): Button = Button(this).apply {
     text = value; textSize = 16f; isAllCaps = false
     setPadding(dp(22), dp(10), dp(22), dp(10)); minHeight = dp(50)
@@ -48,14 +77,8 @@ fun Context.action(value: String, primary: Boolean = false, onClick: () -> Unit)
     // is clipped by tight parents. Elevation is owned by paint() instead.
     stateListAnimator = null
     // One painter for both states, so a button looks the same before and after its first focus.
-    fun paint(focused: Boolean) {
-        background = shape(if (focused || primary) Palette.green else Palette.white,
-            border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
-        setTextColor(if (focused || primary) Color.WHITE else Palette.ink)
-        elevation = if (focused) dp(6).toFloat() else 0f
-    }
-    paint(false)
-    setOnFocusChangeListener { _, focused -> paint(focused) }
+    paintAction(false, primary)
+    setOnFocusChangeListener { _, focused -> paintAction(focused, primary) }
     setOnClickListener { onClick() }
 }
 /** A square, icon-only counterpart to [action]. [description] is read by TalkBack and used by tests. */
@@ -68,10 +91,9 @@ fun Context.iconAction(icon: Int, description: String, primary: Boolean = false,
     stateListAnimator = null
     elevation = 0f
     fun paint(focused: Boolean) {
-        background = shape(if (focused || primary) Palette.green else Palette.white,
-            border = if (focused) Palette.gold else Palette.line, stroke = dp(if (focused) 3 else 1))
+        background = buttonBackground(focused, if (primary) Palette.green else Palette.white)
         imageTintList = ColorStateList.valueOf(if (focused || primary) Color.WHITE else Palette.ink)
-        elevation = if (focused) dp(6).toFloat() else 0f
+        liftForFocus(focused)
     }
     paint(false)
     setOnFocusChangeListener { _, focused -> paint(focused) }
@@ -98,11 +120,11 @@ class ChoiceButton(context: Context, private val value: String, private val sele
         val focused = hasFocus(); val active = selected()
         text = if (active) "✓  $value" else value
         contentDescription = if (active) "$value, selected" else value
-        background = shape(if (focused) Palette.green else if (active) Palette.greenTint else restColor,
-            border = if (focused) Palette.gold else if (active) Palette.green else Palette.line,
-            stroke = context.dp(if (focused) 3 else if (active) 2 else 1))
+        background = if (focused) context.buttonBackground(true, restColor)
+            else shape(if (active) Palette.greenTint else restColor, border = if (active) Palette.green else Palette.line,
+                stroke = context.dp(if (active) 2 else 1))
         setTextColor(if (focused) Color.WHITE else Palette.ink)
-        elevation = if (focused) context.dp(6).toFloat() else 0f
+        liftForFocus(focused)
     }
 }
 fun LinearLayout.space(size: Int) { addView(View(context), LinearLayout.LayoutParams(context.dp(size), context.dp(size))) }

@@ -54,7 +54,7 @@ class PageDial(context: Context, private val count: Int, private val current: In
 
     // A large surface reads better with a border-only focus (as the Settings About row) than a solid green fill.
     private fun paint(focused: Boolean) {
-        background = shape(Palette.white, context.dp(14).toFloat(), if (focused) Palette.gold else Palette.line, context.dp(if (focused) 3 else 1))
+        background = shape(Palette.white, context.dp(14).toFloat(), if (focused) Palette.gold else Palette.line, context.dp(if (focused) 2 else 1))
     }
 
     private fun move(target: Int) {

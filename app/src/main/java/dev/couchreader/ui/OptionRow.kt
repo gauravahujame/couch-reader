@@ -18,7 +18,7 @@ class OptionRow(context: Context, title: String, private val value: () -> String
         addView(display)
         setOnFocusChangeListener { _, hasFocus ->
             background = shape(if (hasFocus) Palette.green else Palette.white,
-                border = if (hasFocus) Palette.gold else Palette.line, stroke = context.dp(if (hasFocus) 3 else 1))
+                border = if (hasFocus) Palette.gold else Palette.line, stroke = context.dp(if (hasFocus) 2 else 1))
             for (i in 0 until childCount) (getChildAt(i) as android.widget.TextView).setTextColor(if (hasFocus) Color.WHITE else Palette.ink)
             if (hasFocus) focused()
         }
