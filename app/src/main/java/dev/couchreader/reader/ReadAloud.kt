@@ -143,7 +143,8 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         }
     }
 
-    fun setRate(value: Float) { rate = value; tts?.setSpeechRate(value); if (state == State.PLAYING) restartSoon() }
+    // Before onInit, initialized() applies [rate]; calling the engine now would wait on its setup lock.
+    fun setRate(value: Float) { rate = value; if (ttsReady) tts?.setSpeechRate(value); if (state == State.PLAYING) restartSoon() }
 
     /** The engine showed a new page: after a page turn, a jump, or a reflow. */
     fun onPageShown() {
@@ -171,7 +172,7 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         closed = true
         main.removeCallbacksAndMessages(null)
         audio.abandonAudioFocusRequest(focusRequest)
-        tts?.stop(); tts?.shutdown(); tts = null
+        tts?.releaseOffMainThread(); tts = null
         engine.highlight(-1)
     }
 
@@ -221,7 +222,8 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
     private fun silence() {
         main.removeCallbacks(restart)
         speechGeneration++; tailUtterance = null; queuedUpTo = -1
-        tts?.stop()
+        // Before onInit there is nothing to stop, and stop() would wait on the engine's setup lock.
+        if (ttsReady) tts?.stop()
     }
 
     private fun id(position: Int) = "$speechGeneration:$pageGeneration:$position"
@@ -298,4 +300,14 @@ class ReadAloud(context: Context, private val engine: ReaderEngine, rate: Float,
         const val TAG = "CouchReadAloud"
         const val NO_VOICE = "No text-to-speech voice is available. Install or enable one in the TV’s settings."
     }
+}
+
+/**
+ * Stops and shuts the engine down on a short-lived thread. Until a TextToSpeech instance has called
+ * onInit, its stop() and shutdown() wait on a lock that the platform holds while it sets up the
+ * engine connection, and Google TTS can take ten seconds there. On the UI thread that froze the app
+ * when Settings (or read-aloud) was closed right after opening.
+ */
+internal fun TextToSpeech.releaseOffMainThread() {
+    Thread({ runCatching { stop(); shutdown() } }, "tts-release").start()
 }

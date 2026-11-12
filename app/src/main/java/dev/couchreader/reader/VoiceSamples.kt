@@ -141,7 +141,8 @@ class VoiceSamples(context: Context, private val onVoices: (List<VoiceChoice>) -
 
     fun stopPlayback() {
         player?.let { runCatching { it.stop() }; it.release() }; player = null
-        if (recording == null) tts?.stop()
+        // Before onInit there is nothing to stop, and stop() would wait on the engine's setup lock.
+        if (loaded && recording == null) tts?.stop()
     }
 
     fun close() {
@@ -149,7 +150,7 @@ class VoiceSamples(context: Context, private val onVoices: (List<VoiceChoice>) -
         main.removeCallbacksAndMessages(null)
         player?.release(); player = null
         recording?.let { File("${file(it).path}.part").delete() }
-        tts?.stop(); tts?.shutdown(); tts = null
+        tts?.releaseOffMainThread(); tts = null
     }
 
     private companion object {
