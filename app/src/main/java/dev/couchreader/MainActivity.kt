@@ -638,12 +638,9 @@ class MainActivity : Activity() {
         content.addView(label("Settings", 32f, serif = true)); content.space(10)
         val description = label("", 15f, Palette.muted).apply { minHeight = dp(42) }
         val rows = column()
-        // The parent column draws children unclipped (for focus shadows), so the scroller clips itself;
-        // otherwise scrolled rows paint over the title above and the description below.
-        val scroll = ScrollView(this).apply {
-            addView(rows)
-            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
-        }
+        // Clips itself, so scrolled rows never paint over the title or description, and rests only on a
+        // section heading, so none is left half cut under the title.
+        val scroll = SectionScrollView(this).apply { addView(rows) }
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         content.space(8); content.addView(description)
         var pref = preferences.get()
@@ -655,7 +652,7 @@ class MainActivity : Activity() {
             if (value.speechRate != previousRate) readAloud?.setRate(value.speechRate / 100f)
             resetSleepTimer()
         }
-        fun heading(text: String) { rows.addView(label(text, 19f, serif = true)); rows.space(5) }
+        fun heading(text: String) { val view = label(text, 19f, serif = true); rows.addView(view); scroll.addHeading(view); rows.space(5) }
         fun option(title: String, explanation: String, value: () -> String, change: (Int) -> Unit): OptionRow {
             val row = OptionRow(this, title, value, change) { description.text = explanation }
             rows.addView(row, LinearLayout.LayoutParams(-1, -2)); rows.space(8)
