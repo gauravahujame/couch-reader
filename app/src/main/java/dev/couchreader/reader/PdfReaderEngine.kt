@@ -211,7 +211,14 @@ private class SentenceMarker(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         paint.color = color
         val pad = width * .004f
-        for (rect in rects) canvas.drawRoundRect(rect.left * width - pad, rect.top * height - pad,
-            rect.right * width + pad, rect.bottom * height + pad, pad * 2, pad * 2, paint)
+        val boxes = rects.map { RectF(it.left * width - pad, it.top * height - pad, it.right * width + pad, it.bottom * height + pad) }
+        // Glyph boxes reach above the capitals and below the descenders, so neighbouring lines overlap and the
+        // translucent tint doubles there. Split each overlap between the two lines, leaving a hairline gap.
+        val gap = resources.displayMetrics.density
+        for (box in boxes) {
+            val below = boxes.filter { it !== box && it.top > box.top && it.left < box.right && it.right > box.left }.minByOrNull { it.top } ?: continue
+            if (box.bottom + gap > below.top) { val middle = (box.bottom + below.top) / 2; box.bottom = middle - gap / 2; below.top = middle + gap / 2 }
+        }
+        for (box in boxes) canvas.drawRoundRect(box, pad * 2, pad * 2, paint)
     }
 }

@@ -201,26 +201,46 @@ window.pageSentences=function(id){
   ReaderBridge.sentences(id,JSON.stringify(items));
  });
 };
-let highlightedWindow=null,highlightedCfi=null;
-function clearReadAloudHighlight(){
- try{highlightedWindow?.CSS?.highlights?.delete('readaloud');}catch(ignored){}
- if(highlightedCfi){try{rendition.annotations.remove(highlightedCfi,'highlight');}catch(ignored){}}
- highlightedWindow=null;highlightedCfi=null;
+/* The highlight is drawn as one rounded box per printed line, laid over the text with a blend mode
+   so the text stays crisp. Per-glyph highlights (CSS ::highlight) paint the font's full ascent and
+   descent, which on tight lines such as headings overlapped the next line and doubled the tint. */
+let highlightLayer=null;
+function clearReadAloudHighlight(){highlightLayer?.remove();highlightLayer=null;}
+function lineBoxes(range){
+ const rects=Array.from(range.getClientRects()).filter(r=>r.width>.5&&r.height>.5).sort((a,b)=>a.top-b.top||a.left-b.left);
+ const lines=[];
+ for(const r of rects){
+  // Pieces of one printed line share a centre line and sit side by side (columns are far apart).
+  const line=lines.find(l=>Math.abs((l.top+l.bottom)/2-(r.top+r.bottom)/2)<Math.min(l.bottom-l.top,r.height)/2&&r.left<=l.right+24&&r.right>=l.left-24);
+  if(line){line.left=Math.min(line.left,r.left);line.right=Math.max(line.right,r.right);line.top=Math.min(line.top,r.top);line.bottom=Math.max(line.bottom,r.bottom);}
+  else lines.push({left:r.left,right:r.right,top:r.top,bottom:r.bottom});
+ }
+ // Neighbouring lines of one column split any vertical overlap, leaving a hairline gap between them.
+ const gap=2;
+ for(const line of lines){
+  const below=lines.filter(o=>o!==line&&o.top>line.top&&o.left<line.right&&o.right>line.left).sort((a,b)=>a.top-b.top)[0];
+  if(below&&line.bottom+gap>below.top){const middle=(line.bottom+below.top)/2;line.bottom=middle-gap/2;below.top=middle+gap/2;}
+ }
+ return lines;
 }
 window.highlightSentence=function(index){
  clearReadAloudHighlight();
  const sentence=pageList[index];if(!sentence)return;
  const doc=sentence.range.startContainer.ownerDocument,win=doc.defaultView;
- const fill=currentPreferences?.dark?'rgba(214, 170, 90, 0.38)':'rgba(170, 107, 43, 0.26)';
- if(win?.CSS?.highlights&&win.Highlight){
-  let style=doc.getElementById('readaloud-style');
-  if(!style){style=doc.createElement('style');style.id='readaloud-style';doc.head.appendChild(style);}
-  style.textContent='::highlight(readaloud){background-color:'+fill+';}';
-  win.CSS.highlights.set('readaloud',new win.Highlight(sentence.range));highlightedWindow=win;
- }else{
-  const contents=rendition.getContents().find(item=>item.document===doc);
-  if(!contents)return;
-  highlightedCfi=contents.cfiFromRange(sentence.range);
-  rendition.annotations.highlight(highlightedCfi,{},null,'readaloud',{fill,'fill-opacity':'1','mix-blend-mode':'normal'});
+ const dark=!!currentPreferences?.dark;
+ // Multiply darkens the warm page to amber and leaves dark ink dark; screen lifts black to amber and keeps ivory text light.
+ const fill=dark?'rgb(81, 65, 34)':'rgb(235, 218, 201)',blend=dark?'screen':'multiply';
+ const layer=doc.createElement('div');
+ layer.setAttribute('aria-hidden','true');
+ // No z-index: that would make the layer its own isolated stacking context, and the marks would then
+ // blend with nothing and paint as opaque boxes over the text. Positioned, it still paints after the text.
+ layer.style.cssText='position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;';
+ const x=win?.scrollX||0,y=win?.scrollY||0,pad=3;
+ for(const line of lineBoxes(sentence.range)){
+  const mark=doc.createElement('div');
+  mark.style.cssText='position:absolute;border-radius:4px;mix-blend-mode:'+blend+';background:'+fill+';left:'+(line.left+x-pad)+'px;top:'+(line.top+y)+'px;width:'+(line.right-line.left+pad*2)+'px;height:'+(line.bottom-line.top)+'px;';
+  layer.appendChild(mark);
  }
+ // A child of <html>, not <body>: positioned against the whole document, outside the book's own layout.
+ doc.documentElement.appendChild(layer);highlightLayer=layer;
 };
