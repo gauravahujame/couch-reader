@@ -13,6 +13,9 @@ While Add book remains open, the TV stays awake and automatically replaces each 
 
 ### PDF Go to page amendment — 11 November 2026
 PDF reading controls offer Go to page: a page dial that starts on the current page. ← / → change it by one page, ↑ / ↓ by a larger step that grows with the page count, number keys type a page, and OK opens it at the top. The popup lists these keys and stays the same size for any page count. PDF outlines are not shown yet.
+### EPUB margins and black dark theme amendment — 12 November 2026
+This supersedes the "remove app-added outer margins" part of the fullscreen reading amendment for EPUBs. EPUB text sits inside a margin of 7% of the screen width on each side and 6% of the height top and bottom, so it never touches the screen edge, much like a PDF page's own margins. The dark theme's page background is black for EPUBs and PDFs alike, matching an inverted PDF page; the text stays warm ivory.
+
 ### Text size and multi-file upload amendment — 12 November 2026
 - EPUB text sizes are 14, 16, 18, 20, 22, 24, 28, 32, 36, 42 and 48 CSS px. The default is 16 px, which matches the body text of a typical PDF page on a 1080p TV. Sizes saved under the old 24–48 px list reset to the new default once.
 - The upload page accepts several files at once and sends them one after another, listing each file with ✓ or ✕ and its reason. When every file is done it shows a summary (green when all were sent) and clears the file picker. If pairing expires or the TV cannot be reached, the remaining files are marked not sent.
