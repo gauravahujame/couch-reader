@@ -56,7 +56,7 @@ private fun Context.buttonBackground(focused: Boolean, rest: Int): android.graph
         addState(intArrayOf(), shape(fill, border = border, stroke = stroke))
     }
 }
-private fun View.liftForFocus(focused: Boolean) {
+internal fun View.liftForFocus(focused: Boolean) {
     elevation = if (focused) context.dp(2).toFloat() else 0f
     val scale = if (focused) FOCUS_SCALE else 1f
     animate().cancel()

@@ -68,9 +68,11 @@ class BookCover(context: Context, title: String, author: String, format: String,
         isFocusable = false
         val spine = context.dp(9).toFloat()
         background = CoverDrawable(tone, context.dp(4).toFloat(), spine)
-        // Extra left padding keeps the text centered on the board rather than over the spine.
-        setPadding(context.dp(16) + spine.toInt(), context.dp(12), context.dp(16), context.dp(12))
         val scale = titleSize / 22f
+        // Extra left padding keeps the text centered on the board rather than over the spine.
+        // Padding shrinks with the title, so a small shelf cover keeps its width for text.
+        val side = (context.dp(16) * scale).toInt()
+        setPadding(side + spine.toInt(), context.dp(12), side, context.dp(12))
         addView(context.label("—  ${format.uppercase()}  —", 10f * scale, 0xffe9dfc4.toInt()).apply { letterSpacing = .15f })
         space((10 * scale).toInt())
         addView(this.title)
@@ -80,5 +82,30 @@ class BookCover(context: Context, title: String, author: String, format: String,
             gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
         })
         contentDescription = if (author.isBlank()) title else "$title by $author"
+    }
+
+    private val preferredTitlePx = this.title.textSize
+
+    /** Shrinks the cover title until its longest word fits on one line, so no word is split ("Moby-Dic / k"). */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w == oldw) return
+        val available = w - paddingLeft - paddingRight
+        if (available <= 0) return
+        val words = title.text.split(Regex("\\s+")).filter { it.isNotEmpty() }
+        val paint = android.text.TextPaint(title.paint)
+        val minimum = 11f * resources.displayMetrics.scaledDensity
+        var size = preferredTitlePx
+        while (size > minimum) {
+            paint.textSize = size
+            if (words.all { paint.measureText(it) <= available }) break
+            size -= resources.displayMetrics.scaledDensity
+        }
+        if (size == title.textSize) return
+        post {
+            title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, size)
+            val metrics = title.paint.fontMetricsInt
+            title.setLineSpacing(size * 1.14f - (metrics.descent - metrics.ascent), 1f)
+        }
     }
 }

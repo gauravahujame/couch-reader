@@ -8,7 +8,7 @@ Each focusable control has a single `paint(focused)` function. It runs once at c
 
 Known regression: a control created with one background and repainted by its focus listener with a different one (for example, borderless at creation and a 1dp `Palette.line` border after) changes its look the first time focus passes over it. Users report this as "it fixes itself after I highlight it".
 
-When a call site replaces the listener with `setOnFocusChangeListener` (the card's read button in `MainActivity.library()` does), call `paintAction(focused)` from the replacement so it keeps background, text color, elevation and scale in step. `OptionRow` and the Settings About row follow the same rule by hand.
+When a call site replaces the listener with `setOnFocusChangeListener` (the library's `BookTile` does, calling `tile.paint`), call `paintAction(focused)` from the replacement so it keeps background, text color, elevation and scale in step. `OptionRow` and the Settings About row follow the same rule by hand.
 
 ## Focus look
 
@@ -19,6 +19,10 @@ The user asked for a restrained focus system. Buttons: green at rest has no bord
 - Set `stateListAnimator = null` on every `Button` or `ImageButton`. The platform animator gives a 2dp resting elevation that the code never sees, and tight parents clip its shadow. Elevation comes only from `paint`: 2dp focused, 0 otherwise.
 - A shadow draws outside the view, so every ancestor up to the page must leave it unclipped. `row()` and `column()` set `clipChildren = false` and `clipToPadding = false`, and `page()` is a `column()`. A plain `LinearLayout`/`FrameLayout` in that chain clips the shadow again.
 - Because those parents no longer clip, a scrolling region draws over its siblings unless it clips itself. The library `ScrollView` uses `outlineProvider = BOUNDS` with `clipToOutline = true`; any new scroller needs the same. For a list with section headings under a fixed title, use `SectionScrollView` and register each heading with `addHeading`: it only rests with a heading at its top edge, so no heading is left half cut. Shadows of controls inside a scroller are therefore cut at the scroller's edge.
+
+## Library shelf
+
+Each book is one `BookTile` (cover, title, author, progress): OK opens, a long OK press or the Menu key opens `bookActions`. There is no per-card button, so a tile at rest has no frame; focus adds a white card with the 2dp gold outline. The tile reserves two title lines and one author line so progress bars line up across a row. The library scroller is a `SectionScrollView` whose stops are the gaps above each row, so a row is never left half cut and the focused tile's outline stays inside the clip. Covers only shorten (down to 5:4) to fit one full row; they never get narrower than the column count allows. `BookCover` shrinks its title until the longest word fits, because a narrow cover otherwise splits words ("Moby-Dic / k").
 
 ## Selected vs focused
 

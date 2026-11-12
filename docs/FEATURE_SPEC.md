@@ -263,6 +263,6 @@ Library masthead and reader controls expose global Settings. Native option rows 
 
 ## Chapter and reading progress — 7 November 2026
 
-Reader controls show the current EPUB chapter and percentage through the book. Before its text-location index is ready, show Calculating progress; a failed index must not prevent reading. Library cards show a non-focusable progress bar and percentage, with unopened books at zero. PDF controls show the fixed page position and corresponding progress.
+Reader controls show the current EPUB chapter and percentage through the book. Before its text-location index is ready, show Calculating progress; a failed index must not prevent reading. Library cards show a non-focusable progress bar and percentage, with unopened books at zero. (Amended 12 November 2026: the library is a cover-first shelf; each book is one focusable tile showing cover, title, author and progress. OK opens it; long-press OK or Menu opens book actions.) PDF controls show the fixed page position and corresponding progress.
 
 EPUB progress derives from generated character-based CFI locations, independent of viewport, font size or spread. Generate asynchronously on a separate book instance after the reader is ready, outside the page-command queue, and reuse the versioned, content-hash-bound private cache on later opens. Keep EPUB resume positions as CFIs; never persist reflowed page numbers. Derived percentage/chapter display data is separate from resume positions. Removing a book removes its cache and derived display data.

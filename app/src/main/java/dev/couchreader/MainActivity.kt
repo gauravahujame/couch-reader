@@ -180,77 +180,62 @@ class MainActivity : Activity() {
         }
         content.addView(heading); content.space(14)
         // The parent column draws children unclipped (for focus shadows), so the scroller clips itself.
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true; clipToPadding = false
-            outlineProvider = android.view.ViewOutlineProvider.BOUNDS; clipToOutline = true
-        }
-        val grid = column()
-        // Column count follows the usable width so cards keep a readable size on any TV density.
-        val gap = dp(14)
-        val usableWidth = resources.displayMetrics.widthPixels * .88 - dp(8)
-        val columns = (usableWidth / dp(250)).toInt().coerceIn(2, 5)
-        val cardWidth = ((usableWidth - gap * (columns - 1)) / columns).toInt()
-        val idealCover = (cardWidth * .62).toInt().coerceIn(dp(120), dp(190))
+        // Each shelf row is a stop, so scrolling never leaves a row half cut under the heading.
+        val scroll = SectionScrollView(this).apply { isFillViewport = true; clipToPadding = false }
+        // A cover-first shelf: each tile is one focus target (OK opens, hold OK or Menu for options).
+        // The grid's padding keeps the focus frame and lift inside the scroller's clip; the negative
+        // margin cancels it, so the covers still line up with the heading.
+        val frame = dp(8)
+        val grid = column().apply { setPadding(frame, frame, frame, frame) }
+        // Tiles keep a minimum width, so a 1080p TV shows six per row. A tile's 6dp inset plus the 16dp
+        // gap leaves about 28dp between neighbouring covers.
+        val gap = dp(16)
+        val usableWidth = resources.displayMetrics.widthPixels * .88
+        val columns = ((usableWidth + gap) / (dp(116) + gap)).toInt().coerceIn(3, 8)
+        val tileWidth = ((usableWidth - gap * (columns - 1)) / columns).toInt()
+        val coverWidth = tileWidth - 2 * dp(BookTile.PADDING_DP)
+        val idealCover = (coverWidth * 1.5).toInt()
         val covers = mutableListOf<View>()
-        val coverTitles = mutableListOf<TextView>()
         var restore: View? = null
-        var recentRead: View? = null
-        var firstRead: View? = null
-        catalog.chunked(columns).forEach { group ->
+        var recentTile: View? = null
+        var firstTile: View? = null
+        catalog.chunked(columns).forEachIndexed { rowIndex, group ->
+            // The gap above a row is its scroll stop, leaving room for the focused tile's outline and lift.
+            if (rowIndex > 0) View(this).also { grid.addView(it, LinearLayout.LayoutParams(1, dp(18))); scroll.addHeading(it) }
             val line = row().apply { gravity = Gravity.TOP }
             group.forEachIndexed { index, book ->
-                if (index > 0) line.space(14)
-                val card = column().apply {
-                    setPadding(dp(14), dp(14), dp(14), dp(14))
-                    background = shape(Palette.white, border = Palette.line, stroke = dp(1))
+                if (index > 0) line.addView(View(this), LinearLayout.LayoutParams(gap, 1))
+                val cover = BookCover(this, book.title, "", book.format, CoverTones.forKey(book.id), titleSize = 17f)
+                val tile = BookTile(this, cover, book.title, book.author, idealCover, { open(book) }, { bookActions(book) })
+                tile.setOnFocusChangeListener { _, focused ->
+                    if (focused) selectedBook = book.id
+                    tile.paint(focused)
                 }
-                val cover = BookCover(this, book.title, book.author, book.format, CoverTones.forKey(book.id))
-                covers += cover; coverTitles += cover.title
-                card.addView(cover, LinearLayout.LayoutParams(-1, idealCover))
-                card.space(10)
-                val saved = progressByBook[book.id]
-                val indicator = row().apply { tag = "progress-${book.id}"; minimumHeight = dp(18) }
-                fillProgress(indicator, saved ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "" else "Calculating…")
-                card.addView(indicator, LinearLayout.LayoutParams(-1, -2))
-                card.space(10)
-                // Primary action and a compact overflow share one line, so every card shows both without scrolling.
-                val buttons = row()
-                val read = action(if (book.opened > 0) "Continue" else "Start reading") { open(book) }.apply {
-                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    contentDescription = if (book.author.isBlank()) "Read ${book.title}" else "Read ${book.title} by ${book.author}"
-                    setOnFocusChangeListener { _, focused ->
-                        if (focused) selectedBook = book.id
-                        paintAction(focused)
-                    }
-                }
-                buttons.addView(read, LinearLayout.LayoutParams(0, -2, 1f))
-                buttons.space(8)
-                buttons.addView(iconAction(R.drawable.ic_more, "Book actions for ${book.title}") { bookActions(book) })
-                card.addView(buttons, LinearLayout.LayoutParams(-1, -2))
-                if (selectedBook == book.id) restore = read
-                if (book.id == recent?.id) recentRead = read
-                if (firstRead == null) firstRead = read
-                line.addView(card, LinearLayout.LayoutParams(cardWidth, -2))
+                covers += cover
+                tile.progress.tag = "progress-${book.id}"
+                fillProgress(tile.progress, progressByBook[book.id] ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "" else "Calculating…")
+                if (selectedBook == book.id) restore = tile
+                if (book.id == recent?.id) recentTile = tile
+                if (firstTile == null) firstTile = tile
+                line.addView(tile, LinearLayout.LayoutParams(tileWidth, -2))
             }
-            grid.addView(line); grid.space(14)
+            grid.addView(line)
         }
-        // Shrink covers (never the controls) until a full row of cards fits the visible area.
+        // Shorten covers (never the text) until one full row fits the visible area; keep them at least 5:4 tall.
         scroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             val firstRow = grid.getChildAt(0) ?: return@addOnLayoutChangeListener
             val current = covers.firstOrNull()?.layoutParams?.height ?: return@addOnLayoutChangeListener
             if (firstRow.height == 0) return@addOnLayoutChangeListener
-            val target = (bottom - top - (firstRow.height - current) - dp(4)).coerceIn(dp(96), idealCover)
+            val target = (bottom - top - 2 * frame - (firstRow.height - current)).coerceIn((coverWidth * 1.25).toInt(), idealCover)
             if (target == current) return@addOnLayoutChangeListener
-            scroll.post {
-                covers.forEach { it.layoutParams = it.layoutParams.apply { height = target } }
-                coverTitles.forEach { it.maxLines = if (target < dp(140)) 2 else 3 }
-            }
+            scroll.post { covers.forEach { it.layoutParams = it.layoutParams.apply { height = target } } }
         }
-        scroll.addView(grid); content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll.addView(grid)
+        content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { leftMargin = -frame; rightMargin = -frame })
         content.space(8)
-        content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open", 11f, Palette.muted).apply { letterSpacing = .08f })
+        content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open    ·    HOLD OK  Options", 11f, Palette.muted).apply { letterSpacing = .08f })
         // Default focus lands on the most recently read book, so OK resumes it straight away.
-        (if (restoreSettingsFocus) settingsButton else restore ?: recentRead ?: firstRead ?: add).requestFocus(); restoreSettingsFocus = false
+        (if (restoreSettingsFocus) settingsButton else restore ?: recentTile ?: firstTile ?: add).requestFocus(); restoreSettingsFocus = false
         catalog.filter { it.format == "epub" && it.opened > 0 && progressByBook[it.id]?.fraction == null && it.id !in failedIndexes }.forEach(::queueIndex)
     }
     private fun progressText(value: ReadingProgress): String {
