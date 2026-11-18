@@ -67,8 +67,8 @@ class LayoutPairingIntegrationTest {
             // Advance only the private expiry in the test; production always uses ten minutes.
             val field = UploadServer::class.java.getDeclaredField("pairing").apply { isAccessible = true }
             val oldPairing = field.get(upload)!!
-            val constructor = oldPairing.javaClass.getDeclaredConstructor(String::class.java, Long::class.javaPrimitiveType).apply { isAccessible = true }
-            field.set(upload, constructor.newInstance(oldToken, SystemClock.elapsedRealtime() - 1))
+            val constructor = oldPairing.javaClass.getDeclaredConstructor(String::class.java, Long::class.javaPrimitiveType, String::class.java).apply { isAccessible = true }
+            field.set(upload, constructor.newInstance(oldToken, SystemClock.elapsedRealtime() - 1, upload.code))
             waitUntil { upload.token != oldToken }
             instrumentation.runOnMainSync {
                 val qr = allViews().filterIsInstance<SquareQrView>().single()
@@ -78,6 +78,13 @@ class LayoutPairingIntegrationTest {
                 bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
                 val result = MultiFormatReader().decode(BinaryBitmap(HybridBinarizer(RGBLuminanceSource(bitmap.width, bitmap.height, pixels))))
                 assertTrue("QR did not show renewed token", result.text.endsWith("token=${upload.token}"))
+                val code = allViews().filterIsInstance<TextView>().single { it.tag == "pairing-code" }
+                assertEquals(upload.code.chunked(3).joinToString(" "), code.text.toString())
+                assertTrue("TV code clipped", code.layout.getLineBottom(code.layout.lineCount - 1) <= code.height)
+                val address = allViews().filterIsInstance<TextView>().single { it.text.startsWith("Browser address:") }
+                assertFalse(address.text.contains("token"))
+                assertTrue(address.text.endsWith(":$port"))
+                assertEquals(1, address.layout.lineCount)
                 assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
             }
             fun status(token: String) = Socket().use { socket ->

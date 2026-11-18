@@ -347,8 +347,8 @@ class MainActivity : Activity() {
         masthead(content, back)
         val body = row()
         val instructions = column()
-        instructions.addView(label("A new story\nis a scan away.", 40f, serif = true)); instructions.space(16)
-        val steps = label("1   Connect your phone or computer to the same Wi-Fi.\n2   Scan the code or open the address in a browser.\n3   Choose one or more EPUBs or unlocked PDFs, up to 50 MiB each.", 18f, Palette.muted)
+        instructions.addView(label("Your next story\nstarts here.", 40f, serif = true)); instructions.space(16)
+        val steps = label("1   Connect your phone or computer to the same Wi-Fi.\n2   Scan the QR, or open the address and enter the TV code.\n3   Choose one or more EPUBs or unlocked PDFs, up to 50 MiB each.", 18f, Palette.muted)
         instructions.addView(steps)
         instructions.space(16)
         val status = label("Finding your local network…", 17f)
@@ -378,7 +378,7 @@ class MainActivity : Activity() {
                 received.addView(label(line, 16f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             }
             if (arrivals.size > 2) received.addView(label("and ${arrivals.size - 2} more", 15f, Palette.muted))
-            received.addView(label("Send more from your phone any time.", 15f, Palette.muted).apply { setPadding(0, dp(6), 0, 0) })
+            received.addView(label("Send more from your phone or computer any time.", 15f, Palette.muted).apply { setPadding(0, dp(6), 0, 0) })
         }
         val actions = row(); instructions.space(14); instructions.addView(actions)
         // The page column draws children unclipped (for focus shadows), so the scroller clips itself;
@@ -393,6 +393,9 @@ class MainActivity : Activity() {
         val codePanel = column().apply { gravity = Gravity.CENTER; setPadding(dp(20), dp(20), dp(20), dp(20)); background = shape(Palette.white) }
         val qr = SquareQrView(this).apply { contentDescription = "Scan to add a book from your phone" }
         codePanel.addView(qr, LinearLayout.LayoutParams(dp(184), dp(184)))
+        codePanel.addView(label("Or enter this TV code", 13f, Palette.muted))
+        val manualCode = label("", 30f, Palette.green).apply { tag = "pairing-code" }
+        codePanel.addView(manualCode)
         val expiry = label("Private, local transfer", 13f, Palette.muted)
         codePanel.addView(expiry)
         body.addView(codePanel, LinearLayout.LayoutParams(dp(230), -2))
@@ -427,7 +430,8 @@ class MainActivity : Activity() {
                 val matrix = MultiFormatWriter().encode(url, BarcodeFormat.QR_CODE, 400, 400)
                 val pixels = IntArray(400 * 400) { i -> if (matrix[i % 400, i / 400]) Color.BLACK else Color.WHITE }
                 qr.setImageBitmap(Bitmap.createBitmap(pixels, 400, 400, Bitmap.Config.ARGB_8888))
-                addressLabel.text = url
+                addressLabel.text = "Browser address:  http://$address:${upload.listeningPort}"
+                manualCode.text = upload.code.chunked(3).joinToString(" ")
             }
             onPairingTick = { refreshed ->
                 if (refreshed) renderCode()
@@ -439,7 +443,7 @@ class MainActivity : Activity() {
             actions.addView(action("Generate new code") {
                 if (upload.refreshPairing()) {
                     renderCode(); onPairingTick?.invoke(false)
-                    status.text = "New code ready. Scan it to connect your phone."
+                    status.text = "New code ready. Scan the QR or enter the TV code in your browser."
                 } else notice("Please wait for the current upload to finish.")
             })
             main.postDelayed(timer, 1000)

@@ -141,6 +141,91 @@ class LibraryIntegrationTest {
         assertNull(Locator.decode("""{"version":1,"format":"pdf","page":-1}"""))
         assertNull(Locator.decode("""{"version":1,"format":"pdf","page":0,"offset":2}"""))
     }
+    @Test fun browserCodePairsWithSessionCookieAndLimitsGuesses() {
+        var clock = 1000L
+        val server = UploadServer(books, ImportBook(books), now = { clock }, onState = { _, _ -> })
+        server.start(3000, true)
+        data class Reply(val status: Int, val body: String, val cookie: String?)
+        fun request(path: String = "/", code: String? = null, cookie: String? = null,
+                    body: ByteArray? = null, origin: String? = null): Reply {
+            // HttpURLConnection silently drops Origin; use raw HTTP so these security checks
+            // exercise the exact headers a browser sends.
+            return Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", server.listeningPort), 3000); socket.soTimeout = 10000
+                val headers = buildString {
+                    append(if (code != null || body != null) "POST " else "GET ")
+                    append("$path HTTP/1.1\r\nHost: 127.0.0.1:${server.listeningPort}\r\nConnection: close\r\n")
+                    code?.let { append("X-Pairing-Code: $it\r\n") }
+                    cookie?.let { append("Cookie: ${it.substringBefore(';')}\r\n") }
+                    origin?.let { append("Origin: $it\r\n") }
+                    append("Content-Length: ${body?.size ?: 0}\r\nContent-Type: application/epub+zip\r\n\r\n")
+                }
+                socket.getOutputStream().write(headers.toByteArray())
+                body?.let { socket.getOutputStream().write(it) }
+                val input = socket.getInputStream().buffered()
+                fun line(): String {
+                    val bytes = java.io.ByteArrayOutputStream()
+                    while (true) { val next = input.read(); if (next < 0 || next == 10) break; if (next != 13) bytes.write(next) }
+                    return bytes.toString("UTF-8")
+                }
+                val status = line().split(' ')[1].toInt()
+                var length = 0
+                var responseCookie: String? = null
+                while (true) {
+                    val header = line()
+                    if (header.isEmpty()) break
+                    if (header.startsWith("Content-Length:", true)) length = header.substringAfter(':').trim().toInt()
+                    if (header.startsWith("Set-Cookie:", true)) responseCookie = header.substringAfter(':').trim()
+                }
+                val content = input.readNBytes(length)
+                assertEquals(length, content.size)
+                Reply(status, content.toString(Charsets.UTF_8), responseCookie)
+            }
+        }
+        try {
+            assertTrue(server.code.matches(Regex("[0-9]{6}")))
+            val landing = request()
+            assertEquals(200, landing.status)
+            assertNull(landing.cookie)
+            assertFalse(landing.body.contains(server.token))
+            assertTrue(landing.body.contains("id=\"upload\" hidden"))
+            assertEquals(403, request("/upload", body = fixture().readBytes()).status)
+            val wrong = if (server.code == "000000") "000001" else "000000"
+            assertEquals(403, request("/pair", code = server.code, origin = "http://other.example").status)
+            repeat(5) { assertEquals(403, request("/pair", code = wrong).status) }
+            assertEquals(429, request("/pair", code = server.code).status)
+            // Rotating the TV code does not bypass the cooldown.
+            server.refreshPairing()
+            assertEquals(429, request("/pair", code = server.code).status)
+            clock += 30001
+            val paired = request("/pair", code = server.code)
+            assertEquals(200, paired.status)
+            val cookie = paired.cookie!!
+            assertTrue(cookie.contains("HttpOnly")); assertTrue(cookie.contains("SameSite=Strict"))
+            assertFalse(cookie.contains("Max-Age"))
+            assertFalse(request(cookie = cookie).body.contains("id=\"upload\" hidden"))
+            val data = fixture().readBytes()
+            assertEquals(200, request("/upload?name=Browser.epub", cookie = cookie, body = data).status)
+            assertEquals(1, books.books().size)
+            assertEquals(403, request("/upload", cookie = cookie, body = data, origin = "http://other.example").status)
+            val qr = request("/?token=${server.token}")
+            assertEquals(200, qr.status); assertNotNull(qr.cookie)
+            assertEquals(200, request("/upload", cookie = qr.cookie, body = data).status)
+            val oldToken = server.token
+            val oldCode = server.code
+            server.refreshPairing()
+            assertNotEquals(oldCode, server.code)
+            assertEquals(403, request("/pair", code = oldCode).status)
+            assertEquals(403, request("/upload", cookie = cookie, body = data).status)
+            assertEquals(403, request("/?token=$oldToken").status)
+            val renewed = request("/pair", code = server.code)
+            assertEquals(200, renewed.status)
+            clock += 600001
+            assertEquals(403, request("/pair", code = server.code).status)
+            assertEquals(403, request("/upload", cookie = renewed.cookie, body = data).status)
+            assertTrue(request(cookie = renewed.cookie).body.contains("id=\"upload\" hidden"))
+        } finally { server.stop() }
+    }
     @Test fun rawUploadDeduplicatesRejectsBadTokensAndStopsAtExpiry() {
         var clock = 1000L
         val server = UploadServer(books, ImportBook(books), now = { clock }, onState = { _, _ -> })
@@ -180,7 +265,7 @@ class LibraryIntegrationTest {
             status to content.toString(Charsets.UTF_8)
         }
         try {
-            assertEquals(403, request("/").first)
+            assertEquals(200, request("/").first)
             assertEquals(403, request("/upload?token=wrong", byteArrayOf(1)).first)
             assertEquals(200, request("/?token=${server.token}").first)
             val data = fixture().readBytes()

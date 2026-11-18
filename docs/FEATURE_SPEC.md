@@ -5,6 +5,12 @@ Date: 3 November 2026
 Platform: Android TV / Google TV  
 Working name: Couch Reader
 
+## Browser pairing amendment — 18 November 2026
+
+Add book displays the base local HTTP address (host and port, no path or token) and a six-digit numeric TV code, grouped as two sets of three. Opening the address shows a pairing form; a correct code opens the existing multi-book uploader and establishes an HttpOnly, SameSite=Strict browser session cookie. QR links retain the unpredictable long token and open the uploader directly, exchanging the token for the same cookie and removing it from the browser address bar.
+
+The TV code, QR token, and paired browser sessions expire together after ten minutes or on manual regeneration. An expired browser upload offers the code form again. Five incorrect attempts cause a server-wide 30-second cooldown, which survives manual code regeneration. Pairing and uploads reject cross-origin browser requests. Leaving Add book still stops the service. No friendly DNS name or cloud redirect is required.
+
 ## User-requested scope update — 5 November 2026
 
 This update supersedes the EPUB-only/PDF-deferred and manual-pairing-renewal statements below. Upload and reading of **unlocked PDFs** are now included alongside reflowable EPUBs. PDFs use Android's native renderer, retain fixed pages, use Left/Right for page turns and Up/Down for vertical scrolling, and save a versioned PDF page/scroll locator. PDF text does not reflow or use EPUB text-size/chapter controls. Both formats retain the 50 MiB input limit and app-private storage; the catalog migration preserves existing EPUBs and positions.

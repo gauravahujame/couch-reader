@@ -15,35 +15,73 @@ import java.util.concurrent.atomic.AtomicBoolean
 class UploadServer(private val books: BookRepository, private val importer: ImportBook,
                    private val now: () -> Long = { android.os.SystemClock.elapsedRealtime() },
                    private val onState: (String, ImportResult?) -> Unit) : NanoHTTPD(0) {
-    private data class Pairing(val token: String, val expires: Long)
+    private data class Pairing(val token: String, val expires: Long, val code: String)
     private fun newPairing() = Pairing(
         ByteArray(24).apply { SecureRandom().nextBytes(this) }.joinToString("") { "%02x".format(it) },
-        now() + 10 * 60 * 1000
+        now() + 10 * 60 * 1000,
+        SecureRandom().nextInt(1_000_000).toString().padStart(6, '0')
     )
     @Volatile private var pairing = newPairing()
     val token: String get() = pairing.token
+    val code: String get() = pairing.code
+    private val cookieName get() = "couch_pair_$listeningPort"
+    private var failedAttempts = 0
+    private var blockedUntil = 0L
     private val busy = AtomicBoolean(false)
     @Volatile private var closed = false
     fun remainingSeconds() = ((pairing.expires - now()).coerceAtLeast(0) / 1000).toInt()
     @Synchronized fun refreshPairing(): Boolean {
         if (closed || busy.get()) return false
-        pairing = newPairing()
+        var next = newPairing()
+        while (next.code == pairing.code) next = newPairing()
+        pairing = next
         return true
     }
     @Synchronized fun refreshIfExpired(): Boolean = now() >= pairing.expires && refreshPairing()
     override fun stop() { closed = true; super.stop() }
-    private fun authorized(session: IHTTPSession): Boolean {
-        val supplied = session.parameters["token"]?.singleOrNull() ?: return false
-        val current = pairing
+    private fun authorized(session: IHTTPSession, current: Pairing = pairing): Boolean {
+        val supplied = if (session.parameters.containsKey("token")) session.parameters["token"]?.singleOrNull()
+            else session.headers["cookie"]?.split(';')?.map { it.trim() }
+                ?.singleOrNull { it.startsWith("$cookieName=") }?.substringAfter('=')
+        if (supplied == null) return false
         return !closed && now() < current.expires && MessageDigest.isEqual(current.token.toByteArray(), supplied.toByteArray())
     }
+    private fun Response.pairedCookie(current: Pairing): Response = apply {
+        // Session cookie: HTTP-only local transport is an explicit product boundary.
+        addHeader("Set-Cookie", "$cookieName=${current.token}; Path=/; HttpOnly; SameSite=Strict")
+    }
+    @Synchronized private fun pair(session: IHTTPSession): Response {
+        val current = pairing
+        if (closed || now() >= current.expires) return response(Response.Status.FORBIDDEN, "Code expired. Enter the current code shown on your TV.")
+        if (now() < blockedUntil) return response(Response.Status.TOO_MANY_REQUESTS, "Too many attempts. Wait 30 seconds, then try the current TV code.")
+            .apply { addHeader("Retry-After", "30") }
+        val supplied = session.headers["x-pairing-code"] ?: ""
+        if (!supplied.matches(Regex("[0-9]{6}")) || !MessageDigest.isEqual(current.code.toByteArray(), supplied.toByteArray())) {
+            failedAttempts++
+            if (failedAttempts >= 5) { failedAttempts = 0; blockedUntil = now() + 30_000 }
+            return response(Response.Status.FORBIDDEN, "That code does not match. Enter the six digits shown on your TV.")
+        }
+        failedAttempts = 0
+        return response(Response.Status.OK, "Paired. Choose books to send to your TV.").pairedCookie(current)
+    }
     override fun serve(session: IHTTPSession): Response {
-        if (!authorized(session)) return response(Response.Status.FORBIDDEN, "Pairing expired or invalid. Open Add book on your TV and scan the new code.")
-        if (session.method == Method.GET && session.uri == "/") return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", PAGE).secure()
-        if (session.method != Method.POST || session.uri != "/upload") return response(Response.Status.NOT_FOUND, "Not found")
-        // Browser uploads are same-origin. Reject cross-site forms even if a pairing URL leaks.
+        // Never accept cross-origin browser mutations, including pairing requests.
         val origin = session.headers["origin"]
-        if (origin != null && origin != "http://${session.headers["host"]}") return response(Response.Status.FORBIDDEN, "Use the paired upload page.")
+        if (session.method == Method.POST && origin != null && origin != "http://${session.headers["host"]}")
+            return response(Response.Status.FORBIDDEN, "Use the paired upload page.")
+        if (session.method == Method.POST && session.uri == "/pair") return pair(session)
+        if (session.method == Method.GET && session.uri == "/") {
+            val current = pairing
+            val paired = authorized(session, current)
+            if (session.parameters.containsKey("token") && !paired)
+                return response(Response.Status.FORBIDDEN, "Pairing expired. Open this address without the token and enter the current TV code, or scan the new QR code.")
+            val page = PAGE.replace("{{PAIR_HIDDEN}}", if (paired) "hidden" else "")
+                .replace("{{UPLOAD_HIDDEN}}", if (paired) "" else "hidden")
+            val result = newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", page).secure()
+            return if (paired) result.pairedCookie(current) else result
+        }
+        if (!authorized(session)) return response(Response.Status.FORBIDDEN, "Pairing expired or invalid. Enter the current TV code to reconnect.")
+        if (session.method != Method.POST || session.uri != "/upload") return response(Response.Status.NOT_FOUND, "Not found")
         val length = session.headers["content-length"]?.toLongOrNull()
             ?: return response(Response.Status.LENGTH_REQUIRED, "Transfer needs a known file size. Try another browser.")
         if (length <= 0 || length > EpubValidator.MAX_COMPRESSED) return response(Response.Status.PAYLOAD_TOO_LARGE, "Each EPUB or PDF must be smaller than 50 MiB.")
@@ -102,23 +140,42 @@ class UploadServer(private val books: BookRepository, private val importer: Impo
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Add a book · Couch Reader</title><style>
 :root{color-scheme:light;font-family:system-ui,sans-serif;color:#24372f;background:#f4f1e9}*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;padding:clamp(16px,4vw,40px);display:flex;justify-content:center;align-items:center;font-size:1rem;line-height:1.5}main{width:100%;max-width:32rem;min-width:0;padding-block:12px}.mark{font-size:.75rem;letter-spacing:.16em;font-weight:700}h1{font-family:Georgia,serif;font-weight:400;font-size:clamp(2rem,7vw,3rem);line-height:1.12;margin:clamp(24px,5vw,36px) 0 16px;text-wrap:balance}p{color:#53645a;overflow-wrap:anywhere}form{margin:24px 0;padding:clamp(16px,5vw,28px);border:1px solid #b8c3b9;border-radius:16px;background:#fffdf7;min-width:0}label{display:block;font-weight:650;margin-bottom:12px}input[type=file]{display:block;box-sizing:border-box;width:100%;min-width:0;max-width:100%;min-height:48px;font:inherit;font-size:.9375rem;overflow:hidden}input::file-selector-button{min-height:44px;max-width:100%;margin:0 12px 8px 0;padding:10px 12px;border:1px solid #b8c3b9;border-radius:6px;background:#f4f1e9;color:#24372f;font:inherit;cursor:pointer}button{display:block;width:100%;min-height:48px;margin-top:20px;border:0;border-radius:8px;padding:14px;background:#294d3b;color:#fff;font:inherit;font-weight:650;cursor:pointer;white-space:normal}button:disabled{opacity:.55}button:focus-visible,input:focus-visible{outline:3px solid #9b632c;outline-offset:4px}progress{display:block;width:100%;margin-top:18px;accent-color:#294d3b}progress[hidden]{display:none}small{display:block;font-size:.8125rem;line-height:1.5;color:#53645a;overflow-wrap:anywhere}#status{min-height:3em;margin:16px 0}#status.done{padding:12px 14px;border-radius:10px;background:#e2e7d6;color:#294d3b;font-weight:650}#status.failed{padding:12px 14px;border-radius:10px;background:#f6e3d6;color:#7a3b12;font-weight:650}#results{list-style:none;margin:0 0 16px;padding:0}#results li{padding:6px 0;border-top:1px solid #dcd9cc;overflow-wrap:anywhere}#results li.ok::before{content:"✓  ";color:#294d3b;font-weight:700}#results li.bad::before{content:"✕  ";color:#9b3b12;font-weight:700}#results li.wait{color:#53645a}#file-help{margin-top:8px}@media(max-width:360px){body{padding:16px}form{padding:16px}h1{font-size:2rem}}@media(max-height:650px){body{align-items:flex-start}}
+[hidden]{display:none!important}#code{width:100%;min-height:52px;padding:12px;border:1px solid #53645a;border-radius:6px;font:inherit;font-size:1.5rem;letter-spacing:.2em;color:inherit;background:#fff}#pair-status{margin-bottom:0}#code[aria-invalid=true]{border-color:#9b3b12}
 </style>
 <main><div class="mark">COUCH READER</div><h1>Your next chapter, on the big screen.</h1><p>Choose books from this device. They go straight to your TV, over your home network.</p>
-<form id="upload" action="/upload" method="post"><label for="file">Choose EPUBs or PDFs</label><input id="file" name="file" type="file" multiple accept=".epub,.pdf,application/epub+zip,application/pdf" aria-describedby="file-help" required><small id="file-help">DRM-free EPUB or unlocked PDF · up to 50 MiB each · pick several at once</small><button id="send" type="submit">Send to TV</button><progress id="progress" hidden aria-label="Upload progress" max="100"></progress></form>
-<p id="status" role="status" aria-live="polite"></p><ul id="results" aria-label="Books sent"></ul><small>Keep Add book open on your TV. The TV code refreshes automatically every 10 minutes. If pairing expires, scan the new code. Your book stays on your TV; no cloud or account.</small></main>
+<noscript><p>Enable JavaScript in your browser to pair and send books.</p></noscript>
+<form id="pair" action="/pair" method="post" aria-labelledby="code-label" {{PAIR_HIDDEN}}><label id="code-label" for="code">Enter the six-digit TV code</label><input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" autocapitalize="none" spellcheck="false" maxlength="7" pattern="[0-9]{3} ?[0-9]{3}" required aria-describedby="code-help pair-status"><small id="code-help">Find the code beside the QR on your TV’s Add book screen.</small><button id="connect" type="submit">Connect to TV</button><p id="pair-status" role="status" aria-live="polite"></p></form>
+<form id="upload" {{UPLOAD_HIDDEN}} aria-label="Send books" action="/upload" method="post"><label for="file">Choose EPUBs or PDFs</label><input id="file" name="file" type="file" multiple accept=".epub,.pdf,application/epub+zip,application/pdf" aria-describedby="file-help" required><small id="file-help">DRM-free EPUB or unlocked PDF · up to 50 MiB each · pick several at once</small><button id="send" type="submit">Send to TV</button><progress id="progress" hidden aria-label="Upload progress" max="100"></progress></form>
+<p id="status" role="status" aria-live="polite"></p><ul id="results" aria-label="Books sent"></ul><small>Keep Add book open on your TV. The TV code refreshes automatically every 10 minutes. If pairing expires, enter the current TV code or scan the QR again. Your book stays on your TV; no cloud or account.</small></main>
 <script>
 const form=document.getElementById('upload'),file=document.getElementById('file'),button=document.getElementById('send'),status=document.getElementById('status'),progress=document.getElementById('progress');
 const results=document.getElementById('results'),offline='Cannot reach your TV. Keep Add book open, check both devices use the same Wi-Fi, and try again. Guest networks may block connections.';
+const pairForm=document.getElementById('pair'),code=document.getElementById('code'),connect=document.getElementById('connect'),pairStatus=document.getElementById('pair-status');
+// The server exchanged a QR token for an HttpOnly session cookie before serving this page.
+if(!form.hidden)history.replaceState(null,'','/');
+code.addEventListener('input',()=>{code.removeAttribute('aria-invalid');pairStatus.textContent='';});
+pairForm.addEventListener('submit',async event=>{
+ event.preventDefault();connect.disabled=true;pairStatus.textContent='Connecting…';
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+ try{
+  const response=await fetch('/pair',{method:'POST',headers:{'X-Pairing-Code':code.value.replace(/ /g,'')},signal:controller.signal});
+  const message=await response.text();pairStatus.textContent=message;
+  if(response.ok){pairForm.hidden=true;form.hidden=false;pairForm.reset();status.className='';status.textContent=message;file.focus();}
+  else{code.setAttribute('aria-invalid','true');code.focus();code.select();}
+ }catch(_){pairStatus.textContent=offline;}
+ finally{clearTimeout(timer);connect.disabled=false;}
+});
+function reconnect(){pairForm.hidden=false;form.hidden=true;pairStatus.textContent='Pairing expired. Enter the current code shown on your TV.';code.focus();}
 const plural=n=>n===1?'1 book':n+' books';
 file.addEventListener('change',()=>{const n=file.files.length;button.textContent=n>1?'Send '+plural(n)+' to TV':'Send to TV';});
 function kind(book){const name=book.name.toLowerCase();if(name.endsWith('.pdf')||book.type==='application/pdf')return'application/pdf';if(name.endsWith('.epub')||book.type==='application/epub+zip')return'application/epub+zip';return null;}
 function line(text,css){const item=document.createElement('li');item.textContent=text;item.className=css;results.appendChild(item);return item;}
 // The TV imports one book at a time, so files go one after another. Resolves {ok, message, stop}.
 function send(book,type,onProgress){return new Promise(resolve=>{
- const url=new URL('/upload',location.href);url.searchParams.set('token',new URL(location.href).searchParams.get('token'));url.searchParams.set('name',book.name);
+ const url=new URL('/upload',location.href);url.searchParams.set('name',book.name);
  const request=new XMLHttpRequest();request.open('POST',url);request.timeout=180000;request.setRequestHeader('Content-Type',type);
  request.upload.onprogress=e=>{if(e.lengthComputable)onProgress(e.loaded/e.total);};
- request.onload=()=>resolve({ok:request.status===200,message:request.responseText||'Transfer failed. Please try again.',stop:request.status===403});
+ request.onload=()=>{if(request.status===403)reconnect();resolve({ok:request.status===200,message:request.responseText||'Transfer failed. Please try again.',stop:request.status===403});};
  request.onerror=request.ontimeout=()=>resolve({ok:false,message:offline,stop:true});
  request.send(book);});}
 form.addEventListener('submit',async event=>{event.preventDefault();const books=Array.from(file.files);if(!books.length)return;
