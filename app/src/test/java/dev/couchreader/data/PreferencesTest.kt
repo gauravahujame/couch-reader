@@ -38,6 +38,28 @@ class PreferencesTest {
             PreferencesRepository(context).save(value)
             assertEquals(value, PreferencesRepository(context).get())
         }
+        for (font in listOf("literary", "modern", "accessible"))
+            for (line in listOf("compact", "standard", "relaxed"))
+                for (alignment in listOf("left", "justified"))
+                    for (margin in listOf("narrow", "standard", "wide"))
+                        for (paragraph in listOf("small", "standard", "large")) {
+                            val value = ReadingPreferences(size = 7, dark = true, speechRate = 150, voice = "offline.voice",
+                                fontStyle = font, lineSpacing = line, textAlignment = alignment,
+                                pageMargins = margin, paragraphSpacing = paragraph)
+                            PreferencesRepository(context).save(value)
+                            assertEquals(value, PreferencesRepository(context).get())
+                        }
+        storage.edit().putString("fontStyle", "unknown").putString("lineSpacing", "bad")
+            .putString("textAlignment", "bad").putString("pageMargins", "bad").putString("paragraphSpacing", "bad").commit()
+        assertEquals("literary", PreferencesRepository(context).get().fontStyle)
+        assertEquals("standard", PreferencesRepository(context).get().lineSpacing)
+        assertEquals("left", PreferencesRepository(context).get().textAlignment)
+        assertEquals("standard", PreferencesRepository(context).get().pageMargins)
+        assertEquals("standard", PreferencesRepository(context).get().paragraphSpacing)
+        assertEquals(7, PreferencesRepository(context).get().size)
+        assertTrue(PreferencesRepository(context).get().dark)
+        assertEquals(150, PreferencesRepository(context).get().speechRate)
+        assertEquals("offline.voice", PreferencesRepository(context).get().voice)
         storage.edit().putInt("speechRate", 42).apply()
         assertEquals(100, PreferencesRepository(context).get().speechRate)
         storage.edit().putInt("sleepMinutes", -2).putInt("size", 100).apply()

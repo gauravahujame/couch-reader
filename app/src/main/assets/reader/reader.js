@@ -49,21 +49,31 @@ const tell=(type,value)=>ReaderBridge.event(type,JSON.stringify(value||{}));
 function serial(action){queue=queue.then(action).catch(()=>tell('error',{message:'This section could not be displayed. Open Chapters to try another section.'}));return queue;}
 function applyPreferences(p){
  currentPreferences=p;const bg=p.dark?'#000000':'#f5f0e5',fg=p.dark?'#efece0':'#28372e';document.body.style.background=bg;document.documentElement.style.background=bg;
+ const fonts={literary:'Literata, Georgia, serif',modern:'Arial, Roboto, sans-serif',accessible:'"Atkinson Hyperlegible", Arial, sans-serif'};
+ const lineHeights={compact:'1.35',standard:'1.58',relaxed:'1.85'};
+ const paragraphGaps={small:'.4em',standard:'.8em',large:'1.2em'};
+ const align=p.textAlignment==='justified'?'justify':'left';
+ const margins={narrow:[4,3],standard:[7,6],wide:[10,8]}[p.pageMargins]||[7,6];
+ const family=fonts[p.fontStyle]||fonts.literary;
+ const pages=document.getElementById('pages');
+ pages.style.width=`calc(100% - ${margins[0]*2}vw)`;
+ pages.style.height=`calc(100% - ${margins[1]*2}vh)`;
+ const wide=p.spread&&pages.getBoundingClientRect().width>=900;
+ if(rendition.manager)rendition.resize();
  rendition.themes.default({
- '@font-face':{'font-family':'Literata','src':'url("https://reader.invalid/reader/literata.ttf")'},
  'html':{'background':bg+' !important','color':fg+' !important'},
- 'body':{'font-family':'Literata, Georgia, serif !important','font-size':p.fontSize+'px !important','line-height':'1.58 !important','color':fg+' !important','background':bg+' !important','margin':'0 !important','padding':'0 !important','overflow-wrap':'break-word'},
- 'p':{'margin':'0 0 .8em !important','text-align':'left !important'},
+ 'body':{'font-family':family+' !important','font-size':p.fontSize+'px !important','line-height':(lineHeights[p.lineSpacing]||lineHeights.standard)+' !important','color':fg+' !important','background':bg+' !important','margin':'0 !important','padding':'0 !important','overflow-wrap':'break-word'},
+ 'p':{'margin':'0 0 '+(paragraphGaps[p.paragraphSpacing]||paragraphGaps.standard)+' !important','text-align':align+' !important','text-align-last':'left !important'},
  'h1,h2,h3':{'line-height':'1.2 !important','color':fg+' !important'},
  'img':{'max-width':'100% !important','max-height':'70vh !important','object-fit':'contain'},
- 'a':{'color':fg+' !important'},'pre':{'white-space':'pre-wrap !important'},'table':{'max-width':'100% !important'}
+ 'a':{'color':fg+' !important'},'pre':{'font-family':'monospace !important','white-space':'pre-wrap !important'},'code,kbd,samp':{'font-family':'monospace !important'},'table':{'max-width':'100% !important'}
  });
  rendition.themes.fontSize(p.fontSize+'px');
  // The vendored manager calculates both column width and page-turn delta from this gap.
- const gap=p.spread && document.documentElement.clientWidth>=900 ? 40 : 0;
+ const gap=wide ? 40 : 0;
  rendition.settings.gap=gap;
  if(rendition.manager)rendition.manager.settings.gap=gap;
- rendition.spread(p.spread?'auto':'none',900);
+ rendition.spread(wide?'auto':'none',900);
 }
 window.openBook=function(config){
  serial(async()=>{
@@ -84,11 +94,19 @@ window.openBook=function(config){
    return;
   }
   rendition=book.renderTo('pages',{width:'100%',height:'100%',flow:'paginated',spread:'none',gap:0,allowScriptedContent:false,allowPopups:false});
+  rendition.hooks.content.register(contents=>{
+   const style=contents.document.createElement('style');
+   style.textContent='@font-face{font-family:Literata;src:url("https://reader.invalid/reader/literata.ttf");font-weight:100 900;font-style:normal}'+
+    '@font-face{font-family:"Atkinson Hyperlegible";src:url("https://reader.invalid/reader/atkinson-regular.ttf");font-weight:400;font-style:normal}'+
+    '@font-face{font-family:"Atkinson Hyperlegible";src:url("https://reader.invalid/reader/atkinson-bold.ttf");font-weight:700;font-style:normal}'+
+    '@font-face{font-family:"Atkinson Hyperlegible";src:url("https://reader.invalid/reader/atkinson-italic.ttf");font-weight:400;font-style:italic}'+
+    '@font-face{font-family:"Atkinson Hyperlegible";src:url("https://reader.invalid/reader/atkinson-bold-italic.ttf");font-weight:700;font-style:italic}';
+   (contents.document.head||contents.document.documentElement).appendChild(style);
+  });
   applyPreferences(config.preferences);
   rendition.on('relocated',location=>{lastLocation=location;pageList=[];if(location.start&&location.start.cfi){tell('location',{cfi:pendingAnchor?.cfi||location.start.cfi,href:pendingAnchor?.href||location.start.href,atStart:location.atStart,atEnd:location.atEnd});readingInfo();tell('page');}});
   rendition.on('displayError',()=>tell('error',{message:'Unable to render this section. Try another chapter.'}));
   await book.ready;
-  if(document.fonts)await document.fonts.load(config.preferences.fontSize+'px Literata');
   const chapters=[];
   function flatten(items,depth){for(const item of items){chapters.push({title:('  '.repeat(depth))+(item.label||'Chapter'),href:navigationHref(item.href)});if(item.subitems)flatten(item.subitems,depth+1);}}
   const navigation=await book.loaded.navigation;flatten(navigation.toc||[],0);
@@ -97,13 +115,21 @@ window.openBook=function(config){
   tell('chapters',chapters);
   try{await rendition.display(config.locator?.cfi||undefined);}
   catch(error){try{await rendition.display(config.locator?.href||undefined);}catch(ignored){await rendition.display();}tell('notice',{message:'Saved passage unavailable. Opened the nearest available section.'});}
+  const initialFont=config.preferences.fontStyle==='accessible'?'Atkinson Hyperlegible':config.preferences.fontStyle==='modern'?'Arial':'Literata';
+  await Promise.all((rendition.getContents()||[]).map(content=>content.document.fonts?.load(config.preferences.fontSize+'px "'+initialFont+'"').catch(()=>{})));
+  rendition.resize();
   opening=false;tell('ready',{indexed:indexReady});
  });
 };
 window.turn=function(forward){return serial(async()=>{if(opening)return;pendingAnchor=null;const loc=rendition.currentLocation();if((forward&&loc.atEnd)||(!forward&&loc.atStart)){tell('boundary',{end:forward});return;}await (forward?rendition.next():rendition.prev());});};
 window.preferences=function(p){return serial(async()=>{// Preserve the original passage across a series of reflows, including persisted relocations.
  if(!pendingAnchor){const start=rendition.currentLocation()?.start;if(start?.cfi)pendingAnchor={cfi:start.cfi,href:start.href};}
- applyPreferences(p);if(pendingAnchor)await rendition.display(pendingAnchor.cfi);});};
+ const anchor=pendingAnchor,requested=p.fontStyle;applyPreferences(p);
+ const family=requested==='accessible'?'Atkinson Hyperlegible':requested==='modern'?'Arial':'Literata';
+ await Promise.all((rendition.getContents()||[]).map(content=>content.document.fonts?.load(p.fontSize+'px "'+family+'"').catch(()=>{})));
+ await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+ if(pendingAnchor===anchor&&anchor)await rendition.display(anchor.cfi);
+});};
 window.chapter=function(href){return serial(()=>{pendingAnchor=null;return rendition.display(href||undefined);});};
 /* Read-aloud. Each section document is split into sentences once; a sentence is a DOM Range, so the
    book markup is never modified and CFIs stay valid. The highlight uses the CSS Custom Highlight API. */

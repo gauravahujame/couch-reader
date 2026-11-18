@@ -137,7 +137,11 @@ class EpubReaderEngine(context: Context, books: BookRepository, book: Book, loca
         }
     }
     private fun denied() = WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(ByteArray(0)))
-    private fun preferencesJson(value: ReadingPreferences) = JSONObject().put("fontSize", ReadingPreferences.sizes[value.size]).put("dark", value.dark).put("spread", value.spread)
+    private fun preferencesJson(value: ReadingPreferences) = JSONObject()
+        .put("fontSize", ReadingPreferences.sizes[value.size]).put("dark", value.dark).put("spread", value.spread)
+        .put("fontStyle", value.fontStyle).put("lineSpacing", value.lineSpacing)
+        .put("textAlignment", value.textAlignment).put("pageMargins", value.pageMargins)
+        .put("paragraphSpacing", value.paragraphSpacing)
     fun refreshProgress() { view.evaluateJavascript("refreshProgress()", null) }
     fun progressAt(locator: Locator?) { view.evaluateJavascript("indexProgress(${locator?.let { JSONObject(it.encode()) } ?: "null"})", null) }
     override fun turn(forward: Boolean) { view.evaluateJavascript("turn($forward)", null) }

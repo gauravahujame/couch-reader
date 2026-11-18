@@ -766,7 +766,9 @@ class MainActivity : Activity() {
         content.space(8); content.addView(description)
         var pref = preferences.get()
         fun save(value: ReadingPreferences) {
-            val renderChanged = value.size != pref.size || value.spread != pref.spread || value.dark != pref.dark
+            val renderChanged = value != pref && (value.size != pref.size || value.spread != pref.spread || value.dark != pref.dark ||
+                value.fontStyle != pref.fontStyle || value.lineSpacing != pref.lineSpacing || value.textAlignment != pref.textAlignment ||
+                value.pageMargins != pref.pageMargins || value.paragraphSpacing != pref.paragraphSpacing)
             val previousRate = pref.speechRate
             pref = value; preferences.save(value)
             if (renderChanged) engine?.preferences(value)
@@ -782,6 +784,34 @@ class MainActivity : Activity() {
         heading("Text")
         val first = option("Text size · Applies to EPUB", "Changes EPUB text across all books. PDF pages keep their printed layout.",
             { "${ReadingPreferences.sizes[pref.size]} px" }) { save(pref.copy(size = (pref.size + it).coerceIn(0, ReadingPreferences.sizes.lastIndex))) }
+        heading("EPUB typography")
+        rows.addView(label("Applies to EPUBs. Changes reflow an open EPUB; changes made from a PDF apply when you next open an EPUB.", 14f, Palette.muted))
+        rows.space(6)
+        val preview = label("A clear page begins with readable type.", 18f, Palette.ink, serif = true).apply {
+            setPadding(dp(14), dp(12), dp(14), dp(12)); background = shape(Palette.white, border = Palette.line, stroke = dp(1))
+            isFocusable = false; isClickable = false
+        }
+        fun updatePreviewFont() { preview.typeface = when (pref.fontStyle) {
+            "modern" -> android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
+            "accessible" -> runCatching { android.graphics.Typeface.createFromAsset(assets, "reader/atkinson-regular.ttf") }
+                .getOrElse { android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL) }
+            else -> runCatching { android.graphics.Typeface.createFromAsset(assets, "reader/literata.ttf") }
+                .getOrElse { android.graphics.Typeface.create("serif", android.graphics.Typeface.NORMAL) }
+        } }
+        updatePreviewFont()
+        rows.addView(preview, LinearLayout.LayoutParams(-1, -2)); rows.space(8)
+        fun typographyOption(title: String, explanation: String, current: () -> String, values: List<Pair<String, String>>, update: (String) -> Unit) {
+            option(title, explanation, { values.firstOrNull { it.first == current() }?.second ?: values.first().second }) { direction ->
+                val ids = values.map { it.first }; val selected = current(); update(ids[(ids.indexOf(selected).coerceAtLeast(0) + direction).coerceIn(0, ids.lastIndex)])
+                updatePreviewFont()
+            }
+        }
+        typographyOption("Font style · EPUB", "EPUB typography applies to every EPUB, including when opened from a PDF. Changes apply to the next EPUB.",
+            { pref.fontStyle }, listOf("literary" to "Literary", "modern" to "Modern", "accessible" to "Accessible")) { save(pref.copy(fontStyle = it)) }
+        typographyOption("Line spacing", "Space between EPUB lines.", { pref.lineSpacing }, listOf("compact" to "Compact · 1.35", "standard" to "Standard · 1.58", "relaxed" to "Relaxed · 1.85")) { save(pref.copy(lineSpacing = it)) }
+        typographyOption("Text alignment", "Align EPUB prose to the left or justify both edges. Final lines stay left aligned.", { pref.textAlignment }, listOf("left" to "Left", "justified" to "Justified")) { save(pref.copy(textAlignment = it)) }
+        typographyOption("Page margins", "Outer margins for EPUB pages.", { pref.pageMargins }, listOf("narrow" to "Narrow", "standard" to "Standard", "wide" to "Wide")) { save(pref.copy(pageMargins = it)) }
+        typographyOption("Paragraph spacing", "Space after EPUB paragraphs.", { pref.paragraphSpacing }, listOf("small" to "Small", "standard" to "Standard", "large" to "Large")) { save(pref.copy(paragraphSpacing = it)) }
         heading("Page")
         option("Two-page spread · Applies to EPUB", "Shows two pages on wide screens, with space between them.",
             { if (pref.spread) "On" else "Off" }) { save(pref.copy(spread = !pref.spread)) }

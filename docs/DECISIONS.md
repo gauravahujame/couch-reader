@@ -8,8 +8,8 @@ Date: 3 November 2026
 - Minimum API 26, compile/target API 35. The target TV was later identified as a OnePlus on Android 11 (API 30) with WebView 156, so API 26 stays a floor that has not been tested on a device. Reflowable DRM-free EPUB remains the documented input assumption.
 - EPUB.js **0.3.93**, vendored in `app/src/main/assets/reader`, BSD-2-Clause. Original license is bundled. Its CFI locators, pagination, navigation, themes, and images sit behind `ReaderEngine`. Upstream: https://github.com/futurepress/epub.js/tree/v0.3.93 . It is the implemented renderer; target-TV compatibility remains an open acceptance check.
 - Use an unpacked, validated OPF, avoiding JSZip and a second in-memory decompression step. EPUB.js owns pagination and CFIs. Book markup has scripts, event handlers, active embeds, inline CSS, and external styles removed. Publisher formatting is deliberately normalized, as permitted by the spec.
-- Literata variable font, bundled under SIL Open Font License 1.1, for offline rendering. Source: https://github.com/google/fonts/tree/main/ofl/literata . Native controls use the platform sans-serif font.
-- Current EPUB text sizes are 14–48 CSS px (11 presets, default 16); the original six sizes (24–48, default 32) were replaced on 12 November 2026, see "Text sizes" below. Current EPUB page styling uses 7% horizontal and 6% vertical margins, a black dark theme, and optional two-page spread on wide viewports. Physical-TV comfort remains unverified.
+- Literata variable font, bundled under SIL Open Font License 1.1, for offline rendering. Source: https://github.com/google/fonts/tree/main/ofl/literata . Native controls use the platform sans-serif font. *The fixed Literata-only choice is superseded 18 November 2026; the default remains Literata, with Modern and Accessible EPUB options described below.*
+- Current EPUB text sizes are 14–48 CSS px (11 presets, default 16); the original six sizes (24–48, default 32) were replaced on 12 November 2026, see "Text sizes" below. Current EPUB page styling uses 7% horizontal and 6% vertical margins, a black dark theme, and optional two-page spread on wide viewports. *Fixed margins are superseded 18 November 2026; standard margins remain 7% horizontal and 6% vertical.* Physical-TV comfort remains unverified.
 
 ## Import and private storage
 
@@ -118,3 +118,9 @@ Schema 4 adds `books.metadata`, the version of these rules that produced a row. 
 - The feature sits above the shelf inside `SectionScrollView`, so it scrolls away rather than consuming a fixed row. Resume is its only focus target and reuses `open(book)`; rendering progress never updates the locator or recency.
 - Resume stays available without saved progress. EPUB indexing updates chapter and progress in place; PDF uses saved page progress or the stored locator when available. Time remaining is omitted because the app does not measure active reading pace.
 - This updates the Library behavior in `docs/FEATURE_SPEC.md`: the prior standalone header shortcut and duplicate shelf tile are superseded by the single featured section.
+
+## EPUB typography presets — 18 November 2026
+- Reader preferences now include stable preset identifiers for font style, line spacing, alignment, page margins, and paragraph spacing. Invalid or absent identifiers default independently, and saving a copy preserves the other preferences.
+- Literary (bundled Literata) remains the default. Modern uses the system sans-serif. Accessible bundles Atkinson Hyperlegible regular, bold, italic, and bold italic files with its SIL Open Font License. Publication sections register each family offline; missing glyphs fall through to system fonts.
+- EPUB reflow uses centered outer `#pages` dimensions; publication body padding remains zero. PDF rendering and positions are unchanged. Typography values do not affect the content-based progress cache.
+- Settings exposes the controls in the existing native option rows and gives a short sample. UI and device acceptance remains outstanding.

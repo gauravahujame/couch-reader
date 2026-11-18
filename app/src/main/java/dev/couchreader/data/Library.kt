@@ -42,7 +42,9 @@ data class Locator(val cfi: String = "", val href: String = "", val version: Int
 data class ReadingPreferences(val size: Int = DEFAULT_SIZE, val dark: Boolean = false,
                               val spread: Boolean = false, val sleepMinutes: Int = 30, val speechRate: Int = 100,
                               /** Text-to-speech voice name; empty means the TV's default voice. */
-                              val voice: String = "") {
+                              val voice: String = "", val fontStyle: String = "literary",
+                              val lineSpacing: String = "standard", val textAlignment: String = "left",
+                              val pageMargins: String = "standard", val paragraphSpacing: String = "standard") {
     companion object {
         /** EPUB text sizes in CSS px; [size] indexes this list. The default matches PDF body text on a 1080p TV. */
         val sizes = listOf(14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48)
@@ -209,8 +211,16 @@ class PreferencesRepository(context: Context) {
     fun get() = ReadingPreferences(size(), storage.getBoolean("dark", false),
         storage.getBoolean("spread", false), storage.getInt("sleepMinutes", 30).takeIf { it in ReadingPreferences.sleepOptions } ?: 30,
         storage.getInt("speechRate", 100).takeIf { it in ReadingPreferences.speechRates } ?: 100,
-        storage.getString("voice", "").orEmpty().take(200))
+        storage.getString("voice", "").orEmpty().take(200),
+        storage.getString("fontStyle", "literary").orEmpty().takeIf { it in setOf("literary", "modern", "accessible") } ?: "literary",
+        storage.getString("lineSpacing", "standard").orEmpty().takeIf { it in setOf("compact", "standard", "relaxed") } ?: "standard",
+        storage.getString("textAlignment", "left").orEmpty().takeIf { it in setOf("left", "justified") } ?: "left",
+        storage.getString("pageMargins", "standard").orEmpty().takeIf { it in setOf("narrow", "standard", "wide") } ?: "standard",
+        storage.getString("paragraphSpacing", "standard").orEmpty().takeIf { it in setOf("small", "standard", "large") } ?: "standard")
     fun save(value: ReadingPreferences) { storage.edit().putInt("version", 3).putInt("size", value.size).putBoolean("dark", value.dark)
         .putBoolean("spread", value.spread).putInt("sleepMinutes", value.sleepMinutes)
-        .putInt("speechRate", value.speechRate).putString("voice", value.voice).apply() }
+        .putInt("speechRate", value.speechRate).putString("voice", value.voice)
+        .putString("fontStyle", value.fontStyle).putString("lineSpacing", value.lineSpacing)
+        .putString("textAlignment", value.textAlignment).putString("pageMargins", value.pageMargins)
+        .putString("paragraphSpacing", value.paragraphSpacing).apply() }
 }
