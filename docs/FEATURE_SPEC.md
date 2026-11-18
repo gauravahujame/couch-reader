@@ -23,8 +23,8 @@ The upload server exists only while Add book is open, stops when the app backgro
 
 ## Library
 
-- Show a cover-first grid, title, author, and reading progress. Recently opened books sort first; unopened books follow import order.
-- **Continue reading** opens the most recently opened book.
+- Show a compact **Continue reading** section for the most recently opened book above the remaining cover-first grid. It shows the cover, saved chapter or PDF page, known progress, and a focused **Resume** action; OK resumes in one press. The section scrolls away with the shelf. Hold OK or Menu opens that book's actions.
+- Show a cover-first grid, title, author, and reading progress for every other book. Recently opened books sort first, with stable ID order for equal open times; unopened books follow catalog import order. The library total includes the featured book.
 - In an empty library, **Add book** is the primary action.
 - Each book is one focus target. OK opens it; long OK or Menu opens actions. Removal requires confirmation and deletes that book's files, position, cache, and derived progress without affecting other books or global settings.
 - Restore the previously selected book when returning to the library.

@@ -48,6 +48,20 @@ class LibraryIntegrationTest {
         assertEquals("two.xhtml", PositionRepository(db).get(second.id)!!.href)
         assertEquals(ReadingPreferences(4, true), PreferencesRepository(context).get())
     }
+    @Test fun catalogUsesStableIdOrderForEqualOpenTimesAndKeepsUnopenedBooksAfterThem() {
+        val importer = ImportBook(books)
+        val first = importer.execute(fixture(2), "first.epub").book
+        val second = importer.execute(fixture(3), "second.epub").book
+        val thirdFile = fixture(3).apply { appendText(" ") }
+        val third = importer.execute(thirdFile, "third.epub").book
+        db.writableDatabase.execSQL("UPDATE books SET opened=1234 WHERE id IN (?, ?)", arrayOf(first.id, second.id))
+        val ordered = books.books()
+        val featured = ordered.firstOrNull { it.opened > 0 }
+        assertEquals(minOf(first.id, second.id), featured?.id)
+        assertEquals(listOf(maxOf(first.id, second.id)), ordered.filter { it.opened > 0 && it.id != featured?.id }.map { it.id })
+        assertEquals(listOf(third.id), ordered.filter { it.opened == 0L }.map { it.id })
+        assertEquals(3, ordered.size)
+    }
     @Test fun progressMigrationPersistsAndCascadesWithoutChangingCfi() {
         val book = ImportBook(books).execute(fixture(), "book.epub").book
         val locator = Locator("epubcfi(/6/2!/4/4/1:15)", "one.xhtml")

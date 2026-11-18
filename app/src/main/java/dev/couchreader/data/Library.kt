@@ -83,7 +83,7 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
     /** Derived cover thumbnails (see [CoverStore]); never inside a book's own directory. */
     val covers = File(context.cacheDir, "covers").apply { mkdirs() }
     @Synchronized fun books(): List<Book> = db.readableDatabase.rawQuery(
-        "SELECT id, hash, title, author, opf, imported, opened, format FROM books ORDER BY opened DESC, imported DESC", null
+        "SELECT id, hash, title, author, opf, imported, opened, format FROM books ORDER BY opened DESC, CASE WHEN opened > 0 THEN id END ASC, imported DESC, id ASC", null
     ).use { cursor -> buildList {
         while (cursor.moveToNext()) add(Book(cursor.getString(0), cursor.getString(1), cursor.getString(2),
             cursor.getString(3), cursor.getString(4), cursor.getLong(5), cursor.getLong(6), cursor.getString(7)))

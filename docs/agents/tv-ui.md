@@ -24,6 +24,8 @@ The user asked for a restrained focus system. Buttons: green at rest has no bord
 
 Each book is one `BookTile` (cover, title, author, progress): OK opens, a long OK press or the Menu key opens `bookActions`. There is no per-card button, so a tile at rest has no frame; focus adds a white card with the 2dp gold outline. The tile reserves two title lines and one author line so progress bars line up across a row. The library scroller is a `SectionScrollView` whose stops are the gaps above each row, so a row is never left half cut and the focused tile's outline stays inside the clip. Covers only shorten (down to 5:4) to fit one full row; they never get narrower than the column count allows. `BookCover` shrinks its title until the longest word fits, because a narrow cover otherwise splits words ("Moby-Dic / k").
 
+The library's **Continue reading** card is the first section in that same scroller. Its Resume button is the sole focus target; OK resumes, while hold OK or Menu opens the featured book actions. Register the shelf heading and row gaps as scroll stops. Keep the featured ID out of the remaining shelf. If focus was on a shelf tile that becomes featured after opening, restore it to Resume.
+
 ## Selected vs focused
 
 For a mutually exclusive choice (the reader theme), use `ChoiceButton`. Focus is green fill plus gold border, so a selected option must not also be a plain green fill, or two options look focused at once. The selected option uses `Palette.greenTint`, a 2dp green border and a ✓. After a change, call `refresh()` on every option in the group. `restColor` sets the fill when the option is neither focused nor selected (Warm light uses the page colour).

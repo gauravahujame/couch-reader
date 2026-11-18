@@ -112,3 +112,9 @@ Schema 4 adds `books.metadata`, the version of these rules that produced a row. 
 - Cookies are HttpOnly, SameSite=Strict, scoped to `/`, and named per listening port because cookies themselves are not port-scoped. They have no persistent expiry; server-side ten-minute pairing expiry remains authoritative. Secure cookies cannot be used on the existing local HTTP transport.
 - Code submission uses POST with an `X-Pairing-Code` header, avoiding URL history and requiring a preflight for cross-origin JavaScript. No CORS permission is granted; POST Origin is checked for both pairing and upload. Five failed attempts impose a global 30-second cooldown, including across manual regeneration, so changing client addresses cannot bypass it.
 - The existing ephemeral port is retained. The user types the displayed host and port, then the code; mDNS and cloud URL shortening are outside this change.
+
+## Continue reading section — 18 November 2026
+- The library features the first opened book in catalog order, uses a deterministic ID tie-breaker for equal open times, and removes that ID from the remaining shelf. Completion percentage is not used to promote an older book because rounded progress is not proof that a book is finished.
+- The feature sits above the shelf inside `SectionScrollView`, so it scrolls away rather than consuming a fixed row. Resume is its only focus target and reuses `open(book)`; rendering progress never updates the locator or recency.
+- Resume stays available without saved progress. EPUB indexing updates chapter and progress in place; PDF uses saved page progress or the stored locator when available. Time remaining is omitted because the app does not measure active reading pace.
+- This updates the Library behavior in `docs/FEATURE_SPEC.md`: the prior standalone header shortcut and duplicate shelf tile are superseded by the single featured section.

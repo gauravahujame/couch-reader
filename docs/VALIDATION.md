@@ -1,5 +1,11 @@
 # Validation — 3 November 2026
 
+## Continue reading section — 18 November 2026
+
+- Host unit tests passed, including stable catalog ordering for equal open timestamps and keeping unopened books after previously opened books. Android Lint, debug APK assembly, and Android test APK assembly passed; the new continue-reading instrumentation tests compile.
+- Added instrumentation coverage for EPUB one-press resume, focus restoration, background progress updates, featured-book cancel/confirmed removal, and PDF resume with missing progress. These tests were not run because `adb devices -l` found no attached device and the filesystem had only 438 MiB free, below the documented 7.2 GiB emulator boot requirement.
+- Device screenshots were not captured. Fresh launch, Resume focused, focus after leaving Resume, EPUB/PDF detail layouts, missing-progress and one-book layouts remain to be visually checked on an emulator or TV.
+
 ## Automated checks
 
 Build baseline: JDK 17, Gradle 8.11.1, Android Gradle Plugin 8.9.2, Kotlin 2.1.20, Android SDK 35, minimum API 26. Gradle distribution checksum verified against the official downloads.gradle.org SHA-256. The wrapper now uses the direct distribution URL and a longer timeout.

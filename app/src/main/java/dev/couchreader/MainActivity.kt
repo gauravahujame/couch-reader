@@ -142,6 +142,8 @@ class MainActivity : Activity() {
         headerActions.addView(settingsButton)
         if (catalog.isNotEmpty()) { headerActions.space(10); headerActions.addView(add) }
         masthead(content, headerActions)
+        content.addView(label("${catalog.size} ${if (catalog.size == 1) "book" else "books"} · On this device", 14f, Palette.muted))
+        content.space(8)
         if (catalog.isEmpty()) {
             val center = row().apply { gravity = Gravity.CENTER }
             val illustration = column().apply {
@@ -166,31 +168,13 @@ class MainActivity : Activity() {
             (if (restoreSettingsFocus) settingsButton else add).requestFocus(); restoreSettingsFocus = false
             return
         }
-        // One compact header row: title and count on the left, "Continue reading" on the right.
-        // Keeping the shortcut out of its own full-width row leaves the vertical space to the cards.
-        val heading = row()
-        val titleGroup = row().apply { gravity = Gravity.BOTTOM }
-        titleGroup.addView(label("Your library", 34f, serif = true)); titleGroup.space(14)
-        titleGroup.addView(label("${catalog.size} ${if (catalog.size == 1) "book" else "books"} · On this device", 15f, Palette.muted).apply { maxLines = 1 })
-        heading.addView(titleGroup, LinearLayout.LayoutParams(0, -2, 1f))
-        val recent = catalog.filter { it.opened > 0 }.maxByOrNull { it.opened }
-        recent?.let { book ->
-            heading.space(16)
-            heading.addView(action("▶   Continue  ·  ${book.title}") { open(book) }.apply {
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                maxWidth = (resources.displayMetrics.widthPixels * .38).toInt()
-                contentDescription = "Continue reading ${book.title}"
-            })
-        }
-        content.addView(heading); content.space(14)
         // The parent column draws children unclipped (for focus shadows), so the scroller clips itself.
-        // Each shelf row is a stop, so scrolling never leaves a row half cut under the heading.
+        // The featured section and shelf share this scroller, so the feature can scroll away.
         val scroll = SectionScrollView(this).apply { isFillViewport = true; clipToPadding = false }
         // A cover-first shelf: each tile is one focus target (OK opens, hold OK or Menu for options).
         // The grid's padding keeps the focus frame and lift inside the scroller's clip; the negative
         // margin cancels it, so the covers still line up with the heading.
         val frame = dp(8)
-        val grid = column().apply { setPadding(frame, frame, frame, frame) }
         // Tiles keep a minimum width, so a 1080p TV shows six per row. A tile's 6dp inset plus the 16dp
         // gap leaves about 28dp between neighbouring covers.
         val gap = dp(16)
@@ -204,9 +188,104 @@ class MainActivity : Activity() {
         // Each shelf row and its covers, so artwork is requested for the rows in view (and the next one).
         val shelfRows = mutableListOf<Pair<View, List<Pair<Book, BookCover>>>>()
         var restore: View? = null
-        var recentTile: View? = null
         var firstTile: View? = null
-        catalog.chunked(columns).forEachIndexed { rowIndex, group ->
+        val featured = catalog.filter { it.opened > 0 }.minWithOrNull(compareByDescending<Book> { it.opened }.thenBy { it.id })
+        val remaining = catalog.filter { it.id != featured?.id }
+        val grid = column().apply { setPadding(frame, frame, frame, frame) }
+        var resume: android.widget.Button? = null
+        if (featured != null) {
+            val feature = row().apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                background = shape(Palette.greenTint, 14f)
+            }
+            val cover = BookCover(this, featured.title, "", featured.format, CoverTones.forKey(featured.id), titleSize = 14f)
+            cover.contentDescription = "Cover of ${featured.title}"
+            cover.layoutParams = LinearLayout.LayoutParams(dp(84), dp(126))
+            covers.showCached(cover, featured)
+            covers.bind(cover, featured, CoverLoader.Priority.VISIBLE)
+            feature.addView(cover)
+            feature.space(20)
+            val details = column().apply { gravity = Gravity.CENTER_VERTICAL }
+            details.addView(label(featured.title, 25f, serif = true).apply {
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                contentDescription = featured.title
+            })
+            val detail = label("", 16f, Palette.muted).apply {
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                tag = "featured-detail-${featured.id}"
+            }
+            details.space(7); details.addView(detail)
+            val featuredProgress = row().apply {
+                tag = "progress-${featured.id}"
+                contentDescription = "Reading progress for ${featured.title}"
+            }
+            fillProgress(featuredProgress, progressByBook[featured.id] ?: ReadingProgress(if (featured.opened == 0L) 0.0 else null, ""),
+                if (featured.id in failedIndexes) "Progress unavailable" else "Calculating…")
+            details.space(10); details.addView(featuredProgress, LinearLayout.LayoutParams(-1, -2))
+            feature.addView(details, LinearLayout.LayoutParams(0, -2, 1f))
+            feature.space(24)
+            resume = action("▶  Resume", primary = true) { open(featured) }.apply {
+                tag = "resume-${featured.id}"
+                val saved = progressByBook[featured.id]
+                contentDescription = buildString {
+                    append("Resume reading ${featured.title}")
+                    saved?.chapter?.takeIf { it.isNotBlank() }?.let { append(". $it") }
+                    saved?.fraction?.let { append(". ${kotlin.math.round(it * 100).toInt()} percent read") }
+                }
+                setOnFocusChangeListener { view, focused ->
+                    if (focused) selectedBook = featured.id
+                    (view as android.widget.Button).paintAction(focused, primary = true)
+                }
+                setOnLongClickListener { bookActions(featured); true }
+                setOnKeyListener { _, keyCode, event ->
+                    if (keyCode == KeyEvent.KEYCODE_MENU && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                        bookActions(featured); true
+                    } else false
+                }
+            }
+            feature.addView(resume)
+            grid.addView(feature)
+            grid.space(20)
+            if (remaining.isNotEmpty()) {
+                val heading = label("Your library", 30f, serif = true)
+                grid.addView(heading)
+                grid.space(10)
+                scroll.addHeading(heading)
+            }
+            if (selectedBook == featured.id) restore = resume
+            if (featured.format == "pdf") {
+                val generation = readerGeneration
+                io.execute {
+                    val locator = positions.get(featured.id)
+                    main.post {
+                        if (screen != "library" || readerGeneration != generation || root.findViewWithTag<TextView>("featured-detail-${featured.id}") == null) return@post
+                        val current = liveProgress[featured.id] ?: progress.all()[featured.id]
+                        val knownChapter = current?.chapter?.takeIf { it.isNotBlank() }
+                            ?: locator?.takeIf { it.format == "pdf" }?.let { "Page ${it.page + 1}" }
+                        root.findViewWithTag<TextView>("featured-detail-${featured.id}")?.let { currentDetail ->
+                            currentDetail.text = knownChapter ?: "Resume your book"
+                            resume?.contentDescription = "Resume reading ${featured.title}. ${currentDetail.text}"
+                        }
+                    }
+                }
+            } else {
+                val current = progressByBook[featured.id]
+                detail.text = current?.chapter?.takeIf { it.isNotBlank() } ?: when {
+                    featured.id in failedIndexes -> "Progress unavailable"
+                    current?.fraction != null -> ""
+                    else -> "Calculating…"
+                }
+                resume?.contentDescription = "Resume reading ${featured.title}. ${detail.text}"
+            }
+        }
+        if (featured == null) {
+            val heading = label("Your library", 30f, serif = true)
+            grid.addView(heading)
+            grid.space(10)
+            scroll.addHeading(heading)
+        }
+        if (remaining.isNotEmpty()) remaining.chunked(columns).forEachIndexed { rowIndex, group ->
             // The gap above a row is its scroll stop, leaving room for the focused tile's outline and lift.
             if (rowIndex > 0) View(this).also { grid.addView(it, LinearLayout.LayoutParams(1, dp(18))); scroll.addHeading(it) }
             val line = row().apply { gravity = Gravity.TOP }
@@ -218,6 +297,7 @@ class MainActivity : Activity() {
                 covers.showCached(cover, book)
                 rowCovers += book to cover
                 val tile = BookTile(this, cover, book.title, book.author, coverWidth, idealCover, { open(book) }, { bookActions(book) })
+                tile.tag = "tile-${book.id}"
                 tile.setOnFocusChangeListener { _, focused ->
                     if (focused) selectedBook = book.id
                     tile.paint(focused)
@@ -226,7 +306,6 @@ class MainActivity : Activity() {
                 tile.progress.tag = "progress-${book.id}"
                 fillProgress(tile.progress, progressByBook[book.id] ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "" else "Calculating…")
                 if (selectedBook == book.id) restore = tile
-                if (book.id == recent?.id) recentTile = tile
                 if (firstTile == null) firstTile = tile
                 line.addView(tile, LinearLayout.LayoutParams(tileWidth, -2))
             }
@@ -251,7 +330,7 @@ class MainActivity : Activity() {
         // In a short viewport, shrink covers (never the text) until one full row fits, keeping their 2:3
         // proportions: width and height shrink together and the cover stays centred in its tile slot.
         scroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
-            val firstRow = grid.getChildAt(0) ?: return@addOnLayoutChangeListener
+            val firstRow = shelfRows.firstOrNull()?.first ?: return@addOnLayoutChangeListener
             val current = shelfCovers.firstOrNull()?.layoutParams?.height ?: return@addOnLayoutChangeListener
             if (firstRow.height == 0) return@addOnLayoutChangeListener
             scroll.post { bindVisibleCovers() }
@@ -264,8 +343,7 @@ class MainActivity : Activity() {
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { leftMargin = -frame; rightMargin = -frame })
         content.space(8)
         content.addView(label("YOUR OWN BOOKS. YOUR OWN PACE.                                      D-PAD  Browse    ·    OK  Open    ·    HOLD OK  Options", 11f, Palette.muted).apply { letterSpacing = .08f })
-        // Default focus lands on the most recently read book, so OK resumes it straight away.
-        (if (restoreSettingsFocus) settingsButton else restore ?: recentTile ?: firstTile ?: add).requestFocus(); restoreSettingsFocus = false
+        (if (restoreSettingsFocus) settingsButton else restore ?: resume ?: firstTile ?: add).requestFocus(); restoreSettingsFocus = false
         catalog.filter { it.format == "epub" && it.opened > 0 && progressByBook[it.id]?.fraction == null && it.id !in failedIndexes }.forEach(::queueIndex)
     }
     private fun progressText(value: ReadingProgress): String {
@@ -299,6 +377,7 @@ class MainActivity : Activity() {
     private fun queueIndex(book: Book) {
         if (!indexing.add(book.id)) return
         failedIndexes.remove(book.id)
+        updateFeaturedProgress(book, liveProgress[book.id] ?: progress.all()[book.id] ?: ReadingProgress(null, ""))
         indexQueue.addLast(book)
         startNextIndex()
     }
@@ -332,15 +411,37 @@ class MainActivity : Activity() {
                         if (books.books().any { it.id == book.id }) progress.save(book.id, value)
                     }
                     root.findViewWithTag<LinearLayout>("progress-${book.id}")?.let { fillProgress(it, value) }
+                    updateFeaturedProgress(book, value)
                     finish()
                 }
                 "indexError", "error" -> {
                     failedIndexes.add(book.id); indexing.remove(book.id)
                     if (currentBook?.id == book.id) root.findViewWithTag<TextView>("reader-progress")?.text = progressText(readerProgress)
                     root.findViewWithTag<LinearLayout>("progress-${book.id}")?.let { fillProgress(it, ReadingProgress(null, "")) }
+                    updateFeaturedProgress(book, ReadingProgress(null, ""), failed = true)
                     finish()
                 }
             }
+        }
+    }
+    /** Updates the featured copy in place; indexing must never replace the section or steal focus. */
+    private fun updateFeaturedProgress(book: Book, value: ReadingProgress, failed: Boolean = false) {
+        if (screen != "library") return
+        val detail = root.findViewWithTag<TextView>("featured-detail-${book.id}") ?: return
+        val chapter = value.chapter.takeIf { it.isNotBlank() }
+        detail.text = chapter ?: when {
+            failed -> "Progress unavailable"
+            book.format == "epub" && book.id in indexing -> "Calculating…"
+            else -> "Resume your book"
+        }
+        root.findViewWithTag<LinearLayout>("progress-${book.id}")?.let {
+            fillProgress(it, value, if (failed) "Progress unavailable" else "Calculating…")
+        }
+        root.findViewWithTag<android.widget.Button>("resume-${book.id}")?.contentDescription = buildString {
+            append("Resume reading ${book.title}")
+            chapter?.let { append(". $it") }
+            value.fraction?.let { append(". ${kotlin.math.round(it * 100).toInt()} percent read") }
+            if (failed) append(". Progress unavailable")
         }
     }
     private fun bookActions(book: Book) {
