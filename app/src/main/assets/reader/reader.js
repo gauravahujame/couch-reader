@@ -255,7 +255,8 @@ window.highlightSentence=function(index){
  const doc=sentence.range.startContainer.ownerDocument,win=doc.defaultView;
  const dark=!!currentPreferences?.dark;
  // Multiply darkens the warm page to amber and leaves dark ink dark; screen lifts black to amber and keeps ivory text light.
- const fill=dark?'rgb(81, 65, 34)':'rgb(235, 218, 201)',blend=dark?'screen':'multiply';
+ // Keep the mark low contrast and tied to the reading palette: amber on warm paper, sage on black.
+ const fill=dark?'rgb(91, 113, 91)':'rgb(255, 237, 184)',blend=dark?'screen':'multiply';
  const layer=doc.createElement('div');
  layer.setAttribute('aria-hidden','true');
  // No z-index: that would make the layer its own isolated stacking context, and the marks would then
