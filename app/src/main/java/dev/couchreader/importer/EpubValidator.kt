@@ -130,7 +130,7 @@ class EpubValidator {
         if (resolved.isAbsolute) throw ImportFailure("Remote resources are not supported.")
         return safePath(resolved.path)
     }
-    private fun xml(file: File): org.w3c.dom.Document {
+    internal fun xml(file: File): org.w3c.dom.Document {
         if (!file.isFile || file.length() > MAX_ENTRY) throw ImportFailure("Invalid EPUB package.")
         // EPUB XML is UTF-8 or UTF-16. Inspect before parsing because Android's XML
         // implementation does not support every Xerces security-feature switch.

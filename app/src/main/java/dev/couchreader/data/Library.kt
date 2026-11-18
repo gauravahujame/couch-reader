@@ -80,6 +80,8 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
     val locationCaches = File(context.filesDir, "book-locations").apply { mkdirs() }
     fun locationCache(book: Book) = File(locationCaches, "${book.id}.json")
     val staging = File(context.cacheDir, "imports").apply { mkdirs() }
+    /** Derived cover thumbnails (see [CoverStore]); never inside a book's own directory. */
+    val covers = File(context.cacheDir, "covers").apply { mkdirs() }
     @Synchronized fun books(): List<Book> = db.readableDatabase.rawQuery(
         "SELECT id, hash, title, author, opf, imported, opened, format FROM books ORDER BY opened DESC, imported DESC", null
     ).use { cursor -> buildList {
@@ -87,6 +89,10 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
             cursor.getString(3), cursor.getString(4), cursor.getLong(5), cursor.getLong(6), cursor.getString(7)))
     } }
     fun directory(book: Book) = File(root, book.id)
+    /** True while [book] is in the catalog with the same content; cover publishing checks this under the same lock. */
+    @Synchronized fun contains(book: Book): Boolean = db.readableDatabase.rawQuery(
+        "SELECT 1 FROM books WHERE id=? AND hash=?", arrayOf(book.id, book.hash)
+    ).use { it.moveToFirst() }
     @Synchronized fun duplicate(hash: String) = books().firstOrNull { it.hash == hash }
     @Synchronized fun commit(book: Book, stage: File) {
         check(stage.renameTo(directory(book))) { "Not enough storage to finalize book. Try again." }
@@ -125,6 +131,7 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
         db.writableDatabase.delete("books", "id=?", arrayOf(book.id))
         directory(book).deleteRecursively()
         android.util.AtomicFile(locationCache(book)).delete()
+        CoverStore.removeEntries(covers, book.id)
     }
     /**
      * Re-derives title and author for books imported under older rules: PDFs stored their filename and
@@ -158,6 +165,9 @@ class BookRepository(context: Context, private val db: LibraryDatabase) {
         locationCaches.listFiles()?.filter { it.name.substringBefore(".") !in known }?.forEach { it.delete() }
         root.listFiles()?.filter { it.name !in known }?.forEach { it.deleteRecursively() }
         known.values.filter { !File(directory(it), it.contentPath).isFile }.forEach(::remove)
+        // Before any cover worker starts: temporary files from a killed process, old versions, orphans.
+        covers.mkdirs()
+        CoverStore.prune(covers, books().associateBy { it.id })
     }
 }
 class PositionRepository(private val db: LibraryDatabase) {

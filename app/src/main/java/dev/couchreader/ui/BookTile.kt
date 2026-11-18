@@ -12,7 +12,7 @@ import android.widget.LinearLayout
  * OK opens the book; holding OK or pressing Menu opens its options. At rest the tile has no frame, so the
  * cover leads; focus adds the standard 2dp gold outline on a white card, a 2dp shadow and a 1.02× lift.
  */
-class BookTile(context: Context, val cover: View, title: String, author: String, coverHeight: Int,
+class BookTile(context: Context, val cover: View, title: String, author: String, coverWidth: Int, coverHeight: Int,
                onOpen: () -> Unit, private val onOptions: () -> Unit) : LinearLayout(context) {
     /** Filled by the caller; holds the non-focusable progress bar and percentage. */
     val progress: LinearLayout = context.row()
@@ -23,7 +23,8 @@ class BookTile(context: Context, val cover: View, title: String, author: String,
         isFocusable = true; isClickable = true; isLongClickable = true
         val inset = context.dp(PADDING_DP)
         setPadding(inset, inset, inset, inset)
-        addView(cover, LayoutParams(-1, coverHeight))
+        // The cover keeps its own width and is centred, so a short shelf can shrink it without changing its proportions.
+        addView(cover, LayoutParams(coverWidth, coverHeight).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL })
         addView(View(context), LayoutParams(1, context.dp(10)))
         // The text block always reserves two title lines and one author line, so progress bars line up across a row.
         val text = context.column()

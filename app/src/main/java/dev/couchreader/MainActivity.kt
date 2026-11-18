@@ -39,6 +39,7 @@ class MainActivity : Activity() {
     private val failedIndexes = mutableSetOf<String>()
     private var indexEngine: EpubReaderEngine? = null
     private lateinit var preferences: PreferencesRepository
+    private lateinit var covers: CoverLoader
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private lateinit var root: FrameLayout
@@ -91,6 +92,8 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         db = LibraryDatabase(this); books = BookRepository(this, db)
         positions = PositionRepository(db); progress = ProgressRepository(db); preferences = PreferencesRepository(this)
+        // Created now, but no cover work is queued until the shelf binds, which is after startup pruning below.
+        covers = CoverLoader(CoverStore(books))
         root = FrameLayout(this); setContentView(root)
         loading("Couch Reader", "Preparing your library")
         io.execute {
@@ -127,6 +130,7 @@ class MainActivity : Activity() {
     }
     private fun library() {
         stopPairing(); closeReader(); screen = "library"
+        covers.detachAll(); covers.newSession()
         val content = page()
         val catalog = books.books()
         val progressByBook = progress.all() + liveProgress
@@ -194,8 +198,11 @@ class MainActivity : Activity() {
         val columns = ((usableWidth + gap) / (dp(116) + gap)).toInt().coerceIn(3, 8)
         val tileWidth = ((usableWidth - gap * (columns - 1)) / columns).toInt()
         val coverWidth = tileWidth - 2 * dp(BookTile.PADDING_DP)
+        // Every cover, artwork or generated, shares one 2:3 portrait frame.
         val idealCover = (coverWidth * 1.5).toInt()
-        val covers = mutableListOf<View>()
+        val shelfCovers = mutableListOf<View>()
+        // Each shelf row and its covers, so artwork is requested for the rows in view (and the next one).
+        val shelfRows = mutableListOf<Pair<View, List<Pair<Book, BookCover>>>>()
         var restore: View? = null
         var recentTile: View? = null
         var firstTile: View? = null
@@ -203,15 +210,19 @@ class MainActivity : Activity() {
             // The gap above a row is its scroll stop, leaving room for the focused tile's outline and lift.
             if (rowIndex > 0) View(this).also { grid.addView(it, LinearLayout.LayoutParams(1, dp(18))); scroll.addHeading(it) }
             val line = row().apply { gravity = Gravity.TOP }
+            val rowCovers = mutableListOf<Pair<Book, BookCover>>()
             group.forEachIndexed { index, book ->
                 if (index > 0) line.addView(View(this), LinearLayout.LayoutParams(gap, 1))
                 val cover = BookCover(this, book.title, "", book.format, CoverTones.forKey(book.id), titleSize = 17f)
-                val tile = BookTile(this, cover, book.title, book.author, idealCover, { open(book) }, { bookActions(book) })
+                // A thumbnail already in memory paints with the first frame; others arrive once the row is in view.
+                covers.showCached(cover, book)
+                rowCovers += book to cover
+                val tile = BookTile(this, cover, book.title, book.author, coverWidth, idealCover, { open(book) }, { bookActions(book) })
                 tile.setOnFocusChangeListener { _, focused ->
                     if (focused) selectedBook = book.id
                     tile.paint(focused)
                 }
-                covers += cover
+                shelfCovers += cover
                 tile.progress.tag = "progress-${book.id}"
                 fillProgress(tile.progress, progressByBook[book.id] ?: ReadingProgress(if (book.opened == 0L) 0.0 else null, ""), if (book.format == "pdf") "" else "Calculating…")
                 if (selectedBook == book.id) restore = tile
@@ -220,15 +231,34 @@ class MainActivity : Activity() {
                 line.addView(tile, LinearLayout.LayoutParams(tileWidth, -2))
             }
             grid.addView(line)
+            shelfRows += line to rowCovers
         }
-        // Shorten covers (never the text) until one full row fits the visible area; keep them at least 5:4 tall.
+        // Requests artwork for the rows in view, then the next row; rows well out of view drop their images.
+        fun bindVisibleCovers() {
+            if (screen != "library" || scroll.height == 0) return
+            val top = scroll.scrollY; val bottom = top + scroll.height
+            val visible = shelfRows.indices.filter { shelfRows[it].first.let { line -> line.bottom > top && line.top < bottom } }
+            val first = visible.firstOrNull() ?: 0; val last = visible.lastOrNull() ?: 0
+            shelfRows.forEachIndexed { index, (_, row) ->
+                when {
+                    index in first..last -> row.forEach { (book, cover) -> covers.bind(cover, book, CoverLoader.Priority.VISIBLE) }
+                    index == last + 1 -> row.forEach { (book, cover) -> covers.bind(cover, book, CoverLoader.Priority.PREFETCH) }
+                    index < first - 1 || index > last + 1 -> row.forEach { (_, cover) -> covers.release(cover) }
+                }
+            }
+        }
+        scroll.setOnScrollChangeListener { _, _, _, _, _ -> bindVisibleCovers() }
+        // In a short viewport, shrink covers (never the text) until one full row fits, keeping their 2:3
+        // proportions: width and height shrink together and the cover stays centred in its tile slot.
         scroll.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
             val firstRow = grid.getChildAt(0) ?: return@addOnLayoutChangeListener
-            val current = covers.firstOrNull()?.layoutParams?.height ?: return@addOnLayoutChangeListener
+            val current = shelfCovers.firstOrNull()?.layoutParams?.height ?: return@addOnLayoutChangeListener
             if (firstRow.height == 0) return@addOnLayoutChangeListener
-            val target = (bottom - top - 2 * frame - (firstRow.height - current)).coerceIn((coverWidth * 1.25).toInt(), idealCover)
+            scroll.post { bindVisibleCovers() }
+            val target = (bottom - top - 2 * frame - (firstRow.height - current)).coerceIn((idealCover * .6).toInt(), idealCover)
             if (target == current) return@addOnLayoutChangeListener
-            scroll.post { covers.forEach { it.layoutParams = it.layoutParams.apply { height = target } } }
+            val width = if (target == idealCover) coverWidth else (target / 1.5).toInt()
+            scroll.post { shelfCovers.forEach { it.layoutParams = it.layoutParams.apply { height = target; this.width = width } } }
         }
         scroll.addView(grid)
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { leftMargin = -frame; rightMargin = -frame })
@@ -462,9 +492,12 @@ class MainActivity : Activity() {
         val cover = BookCover(this, book.title, book.author, book.format, CoverTones.forKey(book.id), titleSize = 20f).apply {
             elevation = dp(14).toFloat(); title.maxLines = 4
         }
+        // Same artwork choice as the shelf; this request outranks any shelf work still queued.
+        covers.bind(cover, book, CoverLoader.Priority.OPEN)
+        covers.detachAll(keep = cover)
         val returning = book.opened > 0
         val opening = loading(if (returning) "Welcome back" else "Now opening", book.title,
-            hero = FrameLayout(this).apply { clipChildren = false; addView(cover, FrameLayout.LayoutParams(dp(150), dp(214))) },
+            hero = FrameLayout(this).apply { clipChildren = false; addView(cover, FrameLayout.LayoutParams(dp(150), dp(225))) },
             detail = book.author.takeIf { it.isNotBlank() }?.let { "by $it" })
         val live = liveProgress[book.id]
         io.execute {
@@ -478,7 +511,7 @@ class MainActivity : Activity() {
                 val eventHandler: (String, String) -> Unit = event@ { type, payload ->
                     if ((screen != "reader" && !(screen == "settings" && settingsFromReader)) || currentBook?.id != book.id || generation != readerGeneration) return@event
                     when (type) {
-                        "ready" -> { if (book.format == "epub" && !JSONObject(payload).optBoolean("indexed")) queueIndex(book); ready = true; dismissLoading(); if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
+                        "ready" -> { covers.detachAll(); if (book.format == "epub" && !JSONObject(payload).optBoolean("indexed")) queueIndex(book); ready = true; dismissLoading(); if (screen == "reader") root.requestFocus(); notice(if (unavailablePosition) "Saved position unavailable. Opened the beginning of the book." else if (book.format == "pdf") "← / →  Pages     ↑ / ↓  Scroll     OK  Controls" else "←  Previous page     →  Next page     OK  Reading controls") }
                         "chapters" -> { val list = JSONArray(payload); chapters = (0 until list.length()).map { list.getJSONObject(it).let { item -> item.getString("title") to item.getString("href") } } }
                         "readingInfo" -> {
                             val data = JSONObject(payload)
@@ -860,6 +893,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         voiceSamples?.close(); voiceSamples = null
         stopPairing(); closeReader(); indexQueue.clear(); indexEngine?.close(); indexEngine = null; io.shutdown()
+        if (::covers.isInitialized) covers.close()
         super.onDestroy()
     }
 }
