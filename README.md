@@ -12,7 +12,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n dev.couchreader/.MainActivity
 ```
 
-Minimum Android API 26. The debug APK is signed for sideloading. Actual-TV compatibility is still pending.
+Minimum Android API 26. The debug APK is signed for sideloading. See [implementation status and release gates](docs/DEVELOPMENT_PLAN.md); physical-TV comfort and performance acceptance remain open.
 
 ## Use
 
@@ -32,7 +32,8 @@ Unsupported: fixed-layout or right-to-left EPUBs, DRM/encrypted EPUBs, password-
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
-# With a compatible device/emulator attached:
+# With a test device/emulator attached. This deletes every book in the installed app;
+# on a TV with real books, use the isolated QA package in tests/README.md.
 ./gradlew :app:connectedDebugAndroidTest
 ```
 

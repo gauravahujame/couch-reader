@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-"""Launch the locally installed CouchReaderTV AVD and open Couch Reader."""
+"""Boot the locally installed CouchReaderTV AVD, then install and open the current debug build.
+
+Usage: python3 scripts/run_emulator.py [--boot-only]
+  --boot-only  boot (or find) the emulator and print its serial, without installing anything.
+"""
 from pathlib import Path
+import argparse
 import os
 import subprocess
 import time
@@ -8,7 +13,9 @@ import time
 PROJECT = Path(__file__).resolve().parents[1]
 SDK = Path(os.environ.get('ANDROID_HOME', Path.home() / 'Library/Android/sdk'))
 ADB = SDK / 'platform-tools/adb'
-APK = PROJECT / 'dist/CouchReader-0.4.0-debug.apk'
+# The build from the current checkout. Archived APKs in dist/ are old releases and may be older
+# than what is installed, so they are never installed from here.
+APK = PROJECT / 'app/build/outputs/apk/debug/app-debug.apk'
 AVD = 'CouchReaderTV'
 LOG = PROJECT / 'outputs/emulator/emulator.log'
 
@@ -29,9 +36,8 @@ def find_device():
     return None
 
 
-def main():
-    if not APK.is_file():
-        raise SystemExit('Build the debug APK first; see README.md.')
+def boot():
+    """Returns the serial of a booted CouchReaderTV, starting the emulator if it is not running."""
     candidates = [Path(os.environ['ANDROID_AVD_HOME'])] if os.environ.get('ANDROID_AVD_HOME') else []
     candidates += [Path.home() / '.config/.android/avd', Path.home() / '.android/avd']
     avd_home = next((p for p in candidates if (p / (AVD + '.ini')).is_file()), None)
@@ -55,13 +61,28 @@ def main():
             raise SystemExit('Emulator exited. See ' + str(LOG))
         device = find_device()
         if device and command('-s', device, 'shell', 'getprop', 'sys.boot_completed', check=False).stdout.strip() == '1':
-            break
+            return device
         time.sleep(2)
-    else:
-        raise SystemExit('Android TV is still starting. See ' + str(LOG))
-    result = command('-s', device, 'install', '-r', str(APK), timeout=60)
+    raise SystemExit('Android TV is still starting. See ' + str(LOG))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument('--boot-only', action='store_true',
+                        help='boot the emulator and print its serial without installing the app')
+    boot_only = parser.parse_args().boot_only
+    if not boot_only and not APK.is_file():
+        raise SystemExit('Build the debug APK first: ./gradlew :app:assembleDebug (or pass --boot-only).')
+    device = boot()
+    if boot_only:
+        print('CouchReaderTV is running as ' + device + '.')
+        return
+    result = command('-s', device, 'install', '-r', str(APK), check=False, timeout=120)
+    if result.returncode != 0:
+        raise SystemExit('Install failed: ' + (result.stdout + result.stderr).strip())
     print(result.stdout.strip())
-    command('-s', device, 'shell', 'am', 'start', '-n', 'dev.couchreader/.MainActivity')
+    # -S stops a running instance, so the new build is what appears.
+    command('-s', device, 'shell', 'am', 'start', '-S', '-n', 'dev.couchreader/.MainActivity')
     print('Couch Reader is running in ' + AVD + ' (' + device + ').')
     print('Use arrow keys to navigate, Enter to select, and Escape to go back.')
 

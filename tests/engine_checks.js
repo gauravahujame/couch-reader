@@ -42,7 +42,7 @@
     assert(location().start.cfi === start, 'Previous page did not restore the first page');
     await win.turn(true); await settle();
     const anchor = location().start.cfi;
-    for (const size of [24,28,32,36,42,48]) {
+    for (const size of [14,16,18,20,22,24,28,32,36,42,48]) {
       const sizeAnchor=location().start.cfi;
       await win.preferences({fontSize:size,dark:size >= 36}); await settle();
       assert(contains(sizeAnchor), 'Font size ' + size + ' lost passage anchor');
